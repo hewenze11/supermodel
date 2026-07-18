@@ -117,7 +117,21 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       const sseWriter = new SSEWriter(reply);
       sseWriter.setupHeaders();
       sseWriter.startHeartbeats();
+
+      // Generate a stable chatcmpl id for the entire stream
+      const streamId = `chatcmpl-${Date.now()}`;
+      const streamCreated = Math.floor(Date.now() / 1000);
+
       try {
+        // Send first chunk: delta.role:"assistant", content:"" per arch M5
+        await sseWriter.writeChunk({
+          id: streamId,
+          object: 'chat.completion.chunk',
+          created: streamCreated,
+          model,
+          choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }]
+        });
+
         const genResult = flowEngine.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController);
         let flowResult: any = null;
         for await (const chunk of genResult) {
@@ -128,18 +142,18 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           }
           await sseWriter.writeChunk(chunk);
         }
-        // Build final chunk with usage + x_supermodel_usage per arch M5
+        // Build final chunk with usage + finish_reason + x_supermodel_usage per arch M5
         const usageSummary = flowResult ? {
           prompt_tokens: flowResult.totalUsage?.prompt_tokens ?? 0,
           completion_tokens: flowResult.totalUsage?.completion_tokens ?? 0,
           total_tokens: (flowResult.totalUsage?.prompt_tokens ?? 0) + (flowResult.totalUsage?.completion_tokens ?? 0)
         } : undefined;
         const finalChunk: any = {
-          id: `chatcmpl-${flowResult?.id ?? Date.now()}`,
+          id: streamId,
           object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
+          created: streamCreated,
           model,
-          choices: [{ index: 0, delta: { role: 'assistant' as const, content: '' }, finish_reason: flowResult?.finishReason ?? 'stop' }]
+          choices: [{ index: 0, delta: {}, finish_reason: flowResult?.finishReason ?? 'stop' }]
         };
         if (usageSummary) {
           finalChunk.usage = usageSummary;
