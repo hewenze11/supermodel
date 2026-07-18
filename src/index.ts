@@ -61,7 +61,8 @@ class SuperModelServer {
       updateRegistry: (newRegistry: ConfigRegistry) => {
         this.configRegistry = newRegistry;
       },
-      adminPassword: adminPassword
+      adminPassword: adminPassword,
+      inferenceApiKeys: apiKeys
     });
     
     // Serve admin UI from UI build directory

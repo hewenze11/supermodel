@@ -43,13 +43,14 @@ export class ConfigLoader {
     const globalConfigPath = path.join(CONFIG_DIR, 'config.yaml');
     let adminPassword: string | undefined;
     let apiKeys: string | undefined;
+    let globalConfigRaw: any = {};
     
     if (fs.existsSync(globalConfigPath)) {
       try {
         const rawGlobalConfig = fs.readFileSync(globalConfigPath, 'utf8');
-        const globalConfig: any = yaml.load(rawGlobalConfig) as any;
-        adminPassword = globalConfig.admin_password;
-        apiKeys = JSON.stringify(globalConfig.api_keys || []);
+        globalConfigRaw = yaml.load(rawGlobalConfig) as any;
+        adminPassword = globalConfigRaw.admin_password;
+        apiKeys = JSON.stringify(globalConfigRaw.api_keys || []);
       } catch (error) {
         console.error(`Error loading global config from ${globalConfigPath}:`, error);
       }
@@ -97,7 +98,7 @@ export class ConfigLoader {
       process.exit(1);
     }
     
-    return this.buildRegistry(configs, adminPassword, apiKeys, loadedInstancesMap);
+    return this.buildRegistry(configs, adminPassword, apiKeys, loadedInstancesMap, globalConfigRaw);
   }
 
   private async loadInstance(instanceName: string, instancePath: string): Promise<LoadedInstance> {
@@ -362,7 +363,7 @@ export class ConfigLoader {
     };
   }
 
-  private buildRegistry(configs: ModelConfig[], adminPassword?: string, apiKeys?: string, loadedInstancesMap?: Map<string, any>): ConfigRegistry {
+  private buildRegistry(configs: ModelConfig[], adminPassword?: string, apiKeys?: string, loadedInstancesMap?: Map<string, any>, globalConfig?: any): ConfigRegistry {
     const registry: ConfigRegistry = {
       instances: [],
       roles: new Map(),
@@ -371,6 +372,12 @@ export class ConfigLoader {
       primaries: [],
       adminPassword,
       apiKeys,
+      port: globalConfig?.port ?? 11451,
+      admin_port: globalConfig?.admin_port ?? 11435,
+      log_level: globalConfig?.log_level ?? 'info',
+      flow_timeout_seconds: globalConfig?.flow_timeout_seconds ?? 300,
+      max_concurrent_flows: globalConfig?.max_concurrent_flows ?? 10,
+      debug_full_payload: globalConfig?.debug_full_payload ?? false,
       loadedInstances: loadedInstancesMap ?? new Map()
     };
     

@@ -93,6 +93,13 @@ export interface ConfigRegistry {
   primaries: ModelConfig[];
   adminPassword?: string;
   apiKeys?: string;
+  /** Global config fields for /admin/status */
+  port?: number;
+  admin_port?: number;
+  log_level?: string;
+  flow_timeout_seconds?: number;
+  max_concurrent_flows?: number;
+  debug_full_payload?: boolean;
   /** LoadedInstance map: instanceName → LoadedInstance (authoritative source for routing) */
   loadedInstances?: Map<string, LoadedInstance>;
 }
