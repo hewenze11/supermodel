@@ -7,7 +7,7 @@
     "supermodel": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/db && cp src/db/schema.sql dist/db/schema.sql",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "cli": "node dist/cli/index.js",
