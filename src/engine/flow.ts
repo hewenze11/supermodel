@@ -194,11 +194,12 @@ export class FlowEngine {
     const now = Date.now();
     db.prepare(SQL_INSERT_FLOW).run(executionId, instanceName, flowConfig.id, 'running', now, 0);
 
+    // P0 guard: validate nodes before any iteration (undefined nodes would throw TypeError)
+    if (!flowConfig.nodes?.length) throw new Error(`Flow '${flowConfig.id}' has no nodes`);
+
     const nodeMap = new Map<string, NodeConfig>();
     for (const n of flowConfig.nodes) nodeMap.set(n.id, n);
 
-    // P0 guard: empty nodes or invalid output_node → fail fast
-    if (!flowConfig.nodes?.length) throw new Error(`Flow '${flowConfig.id}' has no nodes`);
     if (flowConfig.output_node && !nodeMap.has(flowConfig.output_node)) {
       throw new Error(`Flow '${flowConfig.id}' output_node '${flowConfig.output_node}' not found in nodes`);
     }
@@ -315,7 +316,7 @@ export class FlowEngine {
               // Distinguish: flow-level abort (global timeout or user cancel) vs node timeout
               if (abort.signal.aborted) {
                 // Flow-level abort — let the outer while-loop handle DB update on next iteration
-                db.prepare(SQL_UPDATE_NODE_FAILED).run('failed', Date.now(), 'Aborted by flow cancellation', nodeExecId);
+                db.prepare(SQL_UPDATE_NODE_FAILED).run('aborted', Date.now(), 'Aborted by flow cancellation', nodeExecId);
                 // Re-check abort at top of loop
                 continue;
               }

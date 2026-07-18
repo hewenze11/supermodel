@@ -147,7 +147,12 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
         }
         await sseWriter.writeFinal(finalChunk);
       } catch (err: any) {
-        await sseWriter.writeError('Upstream API error');
+        // Distinguish client disconnect (abort) from real upstream errors
+        if (abortController.signal.aborted || err?.name === 'AbortError') {
+          // Client disconnected — silent end, no error message
+        } else {
+          await sseWriter.writeError('Upstream API error');
+        }
       } finally {
         sseWriter.close();
       }
