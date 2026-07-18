@@ -65,17 +65,19 @@ class SuperModelServer {
       inferenceApiKeys: apiKeys
     });
     
-    // Serve admin UI from UI build directory
-    const uiPath = path.join(__dirname, '..', 'ui', 'build');
-    if (fs.existsSync(uiPath)) {
+    // Serve admin UI from Next.js static export (output: 'export' → ui/out)
+    const uiPath = path.join(__dirname, '..', 'ui', 'out');
+    const uiBuildFallback = path.join(__dirname, '..', 'ui', 'build');
+    const resolvedUiPath = fs.existsSync(uiPath) ? uiPath : (fs.existsSync(uiBuildFallback) ? uiBuildFallback : null);
+    if (resolvedUiPath) {
       this.adminServer.register(staticPlugin, {
-        root: uiPath,
+        root: resolvedUiPath,
         prefix: '/',
       });
       
       // Fallback to index.html for SPA routing
       this.adminServer.setNotFoundHandler((req: any, reply: any) => {
-        reply.sendFile('index.html', uiPath);
+        reply.sendFile('index.html', resolvedUiPath as string);
       });
     }
     
