@@ -421,6 +421,8 @@ export class FlowEngine {
           const sig = extractSignal(nodeOutput);
           const cleanOutput = sig ? stripSignal(nodeOutput) : nodeOutput;
 
+          console.log(`[node-output] node=${sNode.id} isOutputNode=${sNode.id === flowConfig.output_node} rawLen=${nodeOutput.length} cleanLen=${cleanOutput.length} sig=${JSON.stringify(sig)}`);
+
           // Update output if this is output_node
           if (sNode.id === flowConfig.output_node) {
             outputText = cleanOutput;
