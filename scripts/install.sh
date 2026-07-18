@@ -421,24 +421,92 @@ if [ -n "$SHELL_RC" ]; then
 fi
 print_ok "supermodel command installed at $BIN_DIR/supermodel"
 
-# ── Done ──────────────────────────────────────────────────────
+# ── Configure Nginx (expose Admin UI to network) ─────────────
+print_step "Configuring Nginx for Admin UI access"
+NGINX_CONF_DIR=""
+if [ -d "/etc/nginx/sites-available" ]; then
+  NGINX_CONF_DIR="/etc/nginx/sites-available"
+elif [ -d "/etc/nginx/conf.d" ]; then
+  NGINX_CONF_DIR="/etc/nginx/conf.d"
+fi
+
+# Install nginx if not present
+if ! command -v nginx &>/dev/null; then
+  echo "  nginx not found, installing..."
+  if command -v apt-get &>/dev/null; then
+    apt-get install -y nginx -qq 2>/dev/null || true
+  elif command -v yum &>/dev/null; then
+    yum install -y nginx -q 2>/dev/null || true
+  fi
+  # Re-check conf dir after install
+  if [ -d "/etc/nginx/sites-available" ]; then
+    NGINX_CONF_DIR="/etc/nginx/sites-available"
+  elif [ -d "/etc/nginx/conf.d" ]; then
+    NGINX_CONF_DIR="/etc/nginx/conf.d"
+  fi
+fi
+
+if command -v nginx &>/dev/null && [ -n "$NGINX_CONF_DIR" ]; then
+  # Write supermodel nginx config
+  # Port 11436: reverse proxy for admin UI (which binds 127.0.0.1:11435)
+  cat > "$NGINX_CONF_DIR/supermodel.conf" <<'NGINX'
+# SuperModel Admin UI — expose to network via port 11436
+server {
+    listen 11436;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:11435;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 120s;
+    }
+}
+NGINX
+
+  # Enable site if using sites-available/sites-enabled pattern
+  if [ -d "/etc/nginx/sites-enabled" ]; then
+    ln -sf "$NGINX_CONF_DIR/supermodel.conf" /etc/nginx/sites-enabled/supermodel.conf 2>/dev/null || true
+  fi
+
+  # Test and reload
+  if nginx -t 2>/dev/null; then
+    if systemctl is-active nginx &>/dev/null; then
+      systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
+    else
+      systemctl enable nginx 2>/dev/null || true
+      systemctl start nginx 2>/dev/null || nginx 2>/dev/null || true
+    fi
+    NGINX_OK=true
+  else
+    echo "  ⚠ Nginx config test failed, skipping nginx setup"
+    NGINX_OK=false
+  fi
+else
+  echo "  ⚠ Nginx not available, skipping (Admin UI will be local-only)"
+  NGINX_OK=false
+fi
+print_ok "Nginx configured"
+
+
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$SERVER_IP" ] && SERVER_IP="your-server-ip"
+
 echo ""
 echo "  ╔══════════════════════════════════════════════════╗"
 echo "  ║  SuperModel installed successfully!              ║"
 echo "  ║                                                  ║"
 echo "  ║  Next steps:                                     ║"
 echo "  ║  1. Edit ~/.supermodel/models/demo-instance/     ║"
-echo "  ║     roles/assistant.yaml                         ║"
+echo "  ║     roles/assistant.yaml (and reviewer_*.yaml)   ║"
 echo "  ║     → replace YOUR_API_KEY_HERE                  ║"
 echo "  ║  2. supermodel start                             ║"
-echo "  ║  3. curl http://localhost:11451/v1/models \\      ║"
-echo "  ║       -H 'Authorization: Bearer <your-key>'      ║"
+echo "  ║  3. Open Admin UI in browser (see below)         ║"
 echo "  ║                                                  ║"
 echo "  ║  Commands:                                       ║"
-echo "  ║    supermodel start   / stop / status / reload   ║"
-echo "  ║                                                  ║"
-echo "  ║  Inference:  http://localhost:11451              ║"
-echo "  ║  Admin:      http://localhost:11435 (local only) ║"
+echo "  ║    supermodel start / stop / status / reload     ║"
 echo "  ╚══════════════════════════════════════════════════╝"
 echo ""
 
@@ -451,7 +519,15 @@ if [ -f "$CONFIG_FILE" ]; then
   echo "    Inference API Key : $_KEY"
   echo "    Admin password    : $_PASS"
   echo ""
-  echo "  Open Admin UI: http://$(hostname -I | awk '{print $1}'):11435"
-  echo "  (Admin UI is local-only; use SSH tunnel from remote machines)"
+  echo "  Access:"
+  echo "    Inference API  : http://${SERVER_IP}:11451/v1"
+  if [ "${NGINX_OK:-false}" = "true" ]; then
+    echo "    Admin UI       : http://${SERVER_IP}:11436   ← open in browser"
+  else
+    echo "    Admin UI       : http://localhost:11435 (local only)"
+    echo "    Remote access  : ssh -L 11435:localhost:11435 root@${SERVER_IP}"
+    echo "                     then open http://localhost:11435"
+  fi
   echo ""
 fi
+
