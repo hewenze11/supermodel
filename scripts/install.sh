@@ -132,27 +132,70 @@ mkdir -p "$DATA_DIR" "$MODELS_DIR"
 # ── Generate admin password if not set ──────────────────────
 if [ ! -f "$CONFIG_FILE" ]; then
   ADMIN_PASS=$(node -e "console.log(require('crypto').randomBytes(20).toString('hex'))")
+  INFER_KEY=$(node -e "console.log('sm-' + require('crypto').randomBytes(16).toString('hex'))")
   cat > "$CONFIG_FILE" <<EOF
 # SuperModel global config
-# Edit this file to customize ports, timeouts, etc.
 port: 11451
 admin_port: 11435
 admin_bind: "127.0.0.1"
 admin_password: "$ADMIN_PASS"
+api_keys:
+  - "$INFER_KEY"
 log_level: info
 flow_timeout_seconds: 300
 max_concurrent_flows: 10
 debug_full_payload: false
 EOF
   echo ""
-  echo "  ┌──────────────────────────────────────────────────┐"
-  echo "  │  Admin password (save this!):                    │"
-  echo "  │  $ADMIN_PASS  │"
-  echo "  │  Config file: $CONFIG_FILE  │"
-  echo "  └──────────────────────────────────────────────────┘"
+  echo "  ┌────────────────────────────────────────────────────────┐"
+  echo "  │  Save these credentials:                               │"
+  echo "  │                                                        │"
+  printf "  │  Inference API Key: %-38s│\n" "$INFER_KEY"
+  printf "  │  Admin password:    %-38s│\n" "$ADMIN_PASS"
+  echo "  │                                                        │"
+  echo "  │  Config: $CONFIG_FILE"
+  echo "  └────────────────────────────────────────────────────────┘"
   echo ""
 fi
 print_ok "Config at $CONFIG_FILE"
+
+# ── Create demo instance (first-time only) ───────────────────
+DEMO_DIR="$MODELS_DIR/demo-instance"
+if [ ! -d "$DEMO_DIR" ]; then
+  print_step "Creating demo instance"
+  mkdir -p "$DEMO_DIR/roles" "$DEMO_DIR/flows"
+
+  cat > "$DEMO_DIR/roles/assistant.yaml" <<'YAML'
+id: assistant
+primary: true
+# Replace with your own API key and base_url
+# Any OpenAI-compatible endpoint works (OpenAI, APImart, OpenRouter, etc.)
+provider_model: gpt-4o-mini
+api_key: YOUR_API_KEY_HERE
+base_url: https://api.openai.com/v1
+provider_type: openai
+context_window: 32000
+system_token_budget: 2000
+YAML
+
+  cat > "$DEMO_DIR/flows/direct.yaml" <<'YAML'
+id: direct
+output_node: node_1
+nodes:
+  - id: node_1
+    type: serial
+    role_id: assistant
+    prompt: "You are a helpful assistant. Answer clearly and concisely."
+YAML
+
+  echo ""
+  echo "  Demo instance created at: $DEMO_DIR"
+  echo "  ⚠  Edit $DEMO_DIR/roles/assistant.yaml"
+  echo "     and replace YOUR_API_KEY_HERE with your actual API key"
+  echo "     then run: supermodel start"
+  echo ""
+  print_ok "Demo instance ready"
+fi
 
 # ── Install supermodel CLI wrapper ───────────────────────────
 print_step "Installing supermodel command"
@@ -182,15 +225,18 @@ echo ""
 echo "  ╔══════════════════════════════════════════════════╗"
 echo "  ║  SuperModel installed successfully!              ║"
 echo "  ║                                                  ║"
-echo "  ║  Get started:                                    ║"
-echo "  ║    supermodel start        # start server        ║"
-echo "  ║    supermodel status       # check status        ║"
-echo "  ║    supermodel stop         # stop server         ║"
+echo "  ║  Next steps:                                     ║"
+echo "  ║  1. Edit ~/.supermodel/models/demo-instance/     ║"
+echo "  ║     roles/assistant.yaml                         ║"
+echo "  ║     → replace YOUR_API_KEY_HERE                  ║"
+echo "  ║  2. supermodel start                             ║"
+echo "  ║  3. curl http://localhost:11451/v1/models \\      ║"
+echo "  ║       -H 'Authorization: Bearer <your-key>'      ║"
 echo "  ║                                                  ║"
-echo "  ║  Models dir: ~/.supermodel/models/               ║"
-echo "  ║  Config:     ~/.supermodel/config.yaml           ║"
+echo "  ║  Commands:                                       ║"
+echo "  ║    supermodel start   / stop / status / reload   ║"
 echo "  ║                                                  ║"
 echo "  ║  Inference:  http://localhost:11451              ║"
-echo "  ║  Admin UI:   http://localhost:11435              ║"
+echo "  ║  Admin:      http://localhost:11435 (local only) ║"
 echo "  ╚══════════════════════════════════════════════════╝"
 echo ""

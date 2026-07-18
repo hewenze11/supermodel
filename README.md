@@ -218,6 +218,16 @@ debug_full_payload: false    # 开启后落库完整请求，调试用
 
 ---
 
+## 卸载
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/uninstall.sh | bash
+```
+
+只删除 SuperModel 自身（`~/.supermodel/`、CLI binary），**不会动 Node.js、git 或任何其他系统依赖**。
+
+---
+
 ## 环境要求
 
 - Node.js 20+
