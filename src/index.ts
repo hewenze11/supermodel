@@ -107,10 +107,10 @@ class SuperModelServer {
   performStartupCompensation() {
     console.log('Performing startup compensation...');
     
-    // Update flow_executions with running status to failed
+    // Update flow_executions with running status to failed (no error_message column)
     const updateFlowStmt = db.prepare(`
       UPDATE flow_executions 
-      SET status = 'failed', finished_at = ?, error_message = 'Process restarted unexpectedly'
+      SET status = 'failed', finished_at = ?, finish_reason = 'process_restarted'
       WHERE status = 'running'
     `);
     const flowResult = updateFlowStmt.run(Date.now());
