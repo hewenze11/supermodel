@@ -121,9 +121,19 @@ npm install --no-fund --no-audit
 print_ok "Dependencies installed"
 
 # ── Build TypeScript ─────────────────────────────────────────
-print_step "Building"
+print_step "Building backend"
 npm run build
-print_ok "Build complete"
+print_ok "Backend build complete"
+
+# ── Build Admin UI ───────────────────────────────────────────
+if [ -d "$APP_DIR/ui" ]; then
+  print_step "Building admin UI (this may take a minute...)"
+  cd "$APP_DIR/ui"
+  npm install --no-fund --no-audit
+  npm run build
+  cd "$APP_DIR"
+  print_ok "Admin UI built"
+fi
 
 # ── Create directories ───────────────────────────────────────
 print_step "Setting up directories"
@@ -256,11 +266,11 @@ nodes:
     prompt: |
       You have received peer reviews of your draft. Analyze the feedback:
 
-      1. If both reviewers found NO P0 or P1 issues: output {"signal": "terminate"} to finalize.
+      1. If both reviewers found NO P0 or P1 issues: output {"signal": "route", "target": "node_final"} to proceed to final answer.
       2. If there are P0 or P1 issues: revise your response addressing all critical feedback,
-         then output {"route": "node_review_group"} to send back for another review round.
+         then output {"signal": "route", "target": "node_review_group"} to send back for another review round.
 
-      Always output the signal/route JSON on its own line at the end of your response.
+      Always output the signal JSON on its own line at the end of your response.
     next: node_final
 
   - id: node_final

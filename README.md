@@ -126,8 +126,9 @@ supermodel start    # 启动（后台运行）
 supermodel stop     # 停止
 supermodel status   # 查看运行状态
 supermodel reload   # 热重载配置（不停服，修改配置后执行）
-supermodel logs     # 查看日志
 ```
+
+> **查看日志**：`cat ~/.supermodel/server.log`
 
 ---
 
@@ -221,7 +222,10 @@ nodes:
 id: web_search
 name: web_search
 description: "搜索互联网上的最新信息"
-endpoint: "https://your-search-api/search"
+endpoint: "https://google.serper.dev/search"
+# API key 通过 Header 传递（以 Serper 为例）
+headers:
+  X-API-KEY: "your-serper-api-key-here"
 parameters:
   type: object
   properties:
@@ -231,7 +235,23 @@ parameters:
   required: [query]
 ```
 
-配置好工具后，在 flow 的节点里加 `tools: [web_search]`，对应节点就能调用工具了。
+配置好工具后，在 flow 节点里加 `tools: [web_search]`，该节点就能自动调用工具：
+
+```yaml
+# flows/direct.yaml（带搜索的版本）
+id: direct
+output_node: node_answer
+nodes:
+  - id: node_answer
+    type: serial
+    role_id: assistant
+    tools:
+      - web_search          # 声明可用工具，AI 决定是否调用
+    prompt: |
+      You are a helpful assistant with web search capability.
+      If the question involves recent events or facts you're unsure about,
+      use the web_search tool to get accurate information first.
+```
 
 ### 全局配置（config.yaml）
 
