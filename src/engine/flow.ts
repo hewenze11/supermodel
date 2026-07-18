@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { promises as dns } from 'dns';
 import { MessageList } from './message-list';
 import { LLMClient, ChatCompletionRequest, StreamChunk } from '../llm/client';
 import { db } from '../db';
@@ -6,9 +7,10 @@ import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfi
 
 // ============================================================
 // SSRF guard: reject tool endpoints pointing to private/loopback addresses
+// Performs both static regex check AND DNS resolution check (defeats DNS rebinding)
 // ============================================================
-const PRIVATE_CIDR_REGEX = [
-  /^127\./,                           // loopback
+const PRIVATE_IP_REGEX = [
+  /^127\./,                           // loopback IPv4
   /^0\./,                             // 0.x.x.x
   /^10\./,                            // RFC1918
   /^172\.(1[6-9]|2\d|3[01])\./,      // RFC1918
@@ -18,10 +20,14 @@ const PRIVATE_CIDR_REGEX = [
   /^fc[0-9a-f]{2}:/i,                 // IPv6 unique local
   /^fd[0-9a-f]{2}:/i,
   /^fe80:/i,                          // IPv6 link-local
-  /^localhost$/i,
+  /^0{0,4}:0{0,4}:0{0,4}:0{0,4}:0{0,4}:0{0,4}:0{0,4}:0{0,1}$/,  // ::
 ];
 
-function validateToolEndpoint(endpoint: string): void {
+function isPrivateAddress(addr: string): boolean {
+  return PRIVATE_IP_REGEX.some(re => re.test(addr));
+}
+
+async function validateToolEndpoint(endpoint: string): Promise<void> {
   let url: URL;
   try {
     url = new URL(endpoint);
@@ -32,10 +38,22 @@ function validateToolEndpoint(endpoint: string): void {
     throw new Error(`Tool endpoint must use http(s): ${endpoint}`);
   }
   const hostname = url.hostname;
-  for (const re of PRIVATE_CIDR_REGEX) {
-    if (re.test(hostname)) {
-      throw new Error(`Tool endpoint points to a private/loopback address which is not allowed: ${endpoint}`);
+  // Static check first (catches localhost/literal IPs without DNS cost)
+  if (isPrivateAddress(hostname) || hostname === 'localhost') {
+    throw new Error(`Tool endpoint points to a private/loopback address which is not allowed: ${endpoint}`);
+  }
+  // DNS resolution check to defeat DNS rebinding / split-horizon DNS
+  try {
+    const result = await dns.lookup(hostname, { all: true });
+    for (const { address } of result) {
+      if (isPrivateAddress(address)) {
+        throw new Error(`Tool endpoint DNS resolves to a private address (${address}), which is not allowed: ${endpoint}`);
+      }
     }
+  } catch (err: any) {
+    if (err.message?.includes('not allowed')) throw err;
+    // DNS lookup failure is itself a security signal — reject
+    throw new Error(`Tool endpoint DNS lookup failed for ${hostname}: ${err.message}`);
   }
 }
 
@@ -109,6 +127,10 @@ export class FlowEngine {
     ctrl.abort();
     // Eagerly remove so the slot is freed immediately
     this.activeExecutions.delete(executionId);
+    // Immediately mark as aborted in DB (main loop may be stuck in async await)
+    try {
+      db.prepare(SQL_UPDATE_FLOW_ABORTED).run(Date.now(), executionId);
+    } catch { /* ignore DB error on cancel */ }
     return true;
   }
 
@@ -236,10 +258,10 @@ export class FlowEngine {
             const nodeTimeoutMs = 60_000;
             const nodeAbort = new AbortController();
             const nodeTimer = setTimeout(() => nodeAbort.abort(), nodeTimeoutMs);
-            const combinedAbort = new AbortController();
-            abort.signal.addEventListener('abort', () => combinedAbort.abort());
-            nodeAbort.signal.addEventListener('abort', () => combinedAbort.abort());
-
+            // Use AbortSignal.any to avoid listener leaks (Node 18+)
+            const combinedSignal = (AbortSignal as any).any
+              ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
+              : abort.signal; // fallback for older Node
             // Is this the output node — we stream to client
             const isOutputNode = (sNode.id === flowConfig.output_node);
 
@@ -249,7 +271,7 @@ export class FlowEngine {
               stream: true,
               stream_options: { include_usage: true }
             })) {
-              if (combinedAbort.signal.aborted) break;
+              if (combinedSignal.aborted) break;
               const delta = chunk.choices?.[0]?.delta?.content;
               if (delta) {
                 nodeOutput += delta;
@@ -423,7 +445,7 @@ export class FlowEngine {
           const toolTimer = setTimeout(() => toolAbort.abort(), toolTimeoutMs);
           try {
             // SSRF guard: validate endpoint before fetch
-            validateToolEndpoint(tool.endpoint);
+            await validateToolEndpoint(tool.endpoint);
             const resp = await fetch(tool.endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(tool.headers ?? {}) },
@@ -459,7 +481,10 @@ export class FlowEngine {
       // Finalize flow
       const status = finishReason === 'max_rounds_reached' ? 'completed' : 'completed';
       db.prepare(SQL_UPDATE_FLOW_DONE).run(status, finishReason ?? 'stop', Date.now(), round, executionId);
-      return { id: executionId, status: 'completed', output: outputText, rounds: round, finishReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
+      const flowResult: FlowExecutionResult = { id: executionId, status: 'completed', output: outputText, rounds: round, finishReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
+      // Yield a marker chunk so streaming consumers (inference route) can capture the result
+      yield { __flowResult: flowResult } as unknown as StreamChunk;
+      return flowResult;
 
     } catch (err: any) {
       db.prepare(SQL_UPDATE_FLOW_FAILED).run(err.message ?? 'unknown_error', Date.now(), 0, executionId);
