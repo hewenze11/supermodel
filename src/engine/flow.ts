@@ -185,8 +185,8 @@ export class FlowEngine {
     let totalCompletion = 0;
     const byRoleUsage: Record<string, { prompt_tokens: number; completion_tokens: number }> = {};
 
-    // flow-level timeout from config (default 5 min); track whether abort was from timer
-    const FLOW_TIMEOUT_MS = 5 * 60 * 1000;
+    // flow-level timeout: read from flowConfig, fallback to 300s (5 min), clamp 1s-3600s
+    const FLOW_TIMEOUT_MS = Math.min(Math.max((flowConfig.timeout_seconds ?? 300) * 1000, 1000), 3600_000);
     let abortedByGlobalTimeout = false;
     const flowTimer = setTimeout(() => {
       abortedByGlobalTimeout = true;
@@ -269,7 +269,8 @@ export class FlowEngine {
               messages: msgs,
               model: role.provider_model,
               stream: true,
-              stream_options: { include_usage: true }
+              stream_options: { include_usage: true },
+              signal: combinedSignal
             })) {
               if (combinedSignal.aborted) break;
               const delta = chunk.choices?.[0]?.delta?.content;
@@ -369,9 +370,13 @@ export class FlowEngine {
               let completion = 0;
               const nodeAbort = new AbortController();
               const timer = setTimeout(() => nodeAbort.abort(), timeoutMs);
+              // Combine flow-level abort with node timeout (P1 fix: parallel node respects flow cancel)
+              const parallelCombinedSignal = (AbortSignal as any).any
+                ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
+                : abort.signal;
               try {
-                for await (const chunk of client.streamChatCompletion({ messages: msgs, model: role.provider_model, stream: true, stream_options: { include_usage: true } })) {
-                  if (nodeAbort.signal.aborted) break;
+                for await (const chunk of client.streamChatCompletion({ messages: msgs, model: role.provider_model, stream: true, stream_options: { include_usage: true }, signal: parallelCombinedSignal })) {
+                  if (parallelCombinedSignal.aborted) break;
                   const delta = chunk.choices?.[0]?.delta?.content;
                   if (delta) output += delta;
                   if (chunk.usage) { prompt = chunk.usage.prompt_tokens; completion = chunk.usage.completion_tokens; }
@@ -443,6 +448,10 @@ export class FlowEngine {
           const toolTimeoutMs = (tool.timeout_seconds ?? 30) * 1000;
           const toolAbort = new AbortController();
           const toolTimer = setTimeout(() => toolAbort.abort(), toolTimeoutMs);
+          // Combine flow-level abort with tool timeout (P1 fix: tool respects flow cancel)
+          const toolCombinedSignal = (AbortSignal as any).any
+            ? (AbortSignal as any).any([abort.signal, toolAbort.signal])
+            : abort.signal;
           try {
             // SSRF guard: validate endpoint before fetch
             await validateToolEndpoint(tool.endpoint);
@@ -450,7 +459,7 @@ export class FlowEngine {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(tool.headers ?? {}) },
               body: JSON.stringify({ input, context: { instance_name: instanceName, flow_name: flowConfig.id, node_id: tNode.id, round, call_mode: 'direct' } }),
-              signal: toolAbort.signal
+              signal: toolCombinedSignal
             });
             clearTimeout(toolTimer);
             if (!resp.ok) throw new Error(`Tool HTTP ${resp.status}`);

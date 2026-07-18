@@ -18,6 +18,7 @@ export interface ChatCompletionRequest {
   stream_options?: {
     include_usage: boolean;
   };
+  signal?: AbortSignal;   // Optional external abort signal
 }
 
 export interface ChatCompletionResponse {
@@ -105,6 +106,9 @@ export class LLMClient {
 
   private async callOpenAI(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     const controller = new AbortController();
+    if (request.signal) {
+      request.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
     
     try {
@@ -154,6 +158,9 @@ export class LLMClient {
 
   private async *streamOpenAI(request: ChatCompletionRequest): AsyncGenerator<StreamChunk, void, void> {
     const controller = new AbortController();
+    if (request.signal) {
+      request.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for streaming
     
     try {
@@ -242,6 +249,9 @@ export class LLMClient {
 
   private async callAnthropic(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     const controller = new AbortController();
+    if (request.signal) {
+      request.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
     
     try {
@@ -305,6 +315,9 @@ export class LLMClient {
 
   private async *streamAnthropic(request: ChatCompletionRequest): AsyncGenerator<StreamChunk, void, void> {
     const controller = new AbortController();
+    if (request.signal) {
+      request.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout for streaming
     
     try {
@@ -509,4 +522,5 @@ export class LLMClient {
     }
   }
 }
+
 
