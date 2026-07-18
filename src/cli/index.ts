@@ -50,10 +50,13 @@ async function startServer(): Promise<void> {
   }
 
   // Spawn the server process using spawn (not execSync) for background execution
-  const child = spawn('node', ['../dist/index.js'], { 
-    cwd: __dirname,
+  const serverPath = path.resolve(__dirname, '../index.js');  // dist/index.js
+  const logPath = path.join(process.env.HOME ?? '/tmp', '.supermodel', 'server.log');
+  
+  const logFd = require('fs').openSync(logPath, 'a');
+  const child = spawn('node', [serverPath], { 
     detached: true, 
-    stdio: 'ignore' 
+    stdio: ['ignore', logFd, logFd]
   });
 
   // Store the PID and admin URL in the state file
