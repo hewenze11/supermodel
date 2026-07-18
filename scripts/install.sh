@@ -6,6 +6,7 @@
 set -euo pipefail
 
 REPO="https://github.com/hewenze11/supermodel"
+BRANCH="${SUPERMODEL_BRANCH:-main}"   # override with: SUPERMODEL_BRANCH=dev bash install.sh
 INSTALL_DIR="$HOME/.supermodel"
 BIN_DIR="$HOME/.local/bin"
 APP_DIR="$HOME/.supermodel/app"
@@ -75,11 +76,11 @@ mkdir -p "$APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
   echo "Updating existing installation..."
   git -C "$APP_DIR" fetch origin
-  git -C "$APP_DIR" checkout main
-  git -C "$APP_DIR" pull --ff-only origin main
+  git -C "$APP_DIR" checkout "$BRANCH"
+  git -C "$APP_DIR" pull --ff-only origin "$BRANCH"
 else
-  echo "Cloning $REPO ..."
-  git clone --depth 1 --branch main "$REPO" "$APP_DIR"
+  echo "Cloning $REPO (branch: $BRANCH)..."
+  git clone --depth 1 --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 print_ok "Source code ready at $APP_DIR"
 
