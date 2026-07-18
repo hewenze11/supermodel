@@ -178,23 +178,153 @@ context_window: 32000
 system_token_budget: 2000
 YAML
 
+  # For review/debate flows, create two reviewer roles
+  cat > "$DEMO_DIR/roles/reviewer_a.yaml" <<'YAML'
+id: reviewer_a
+primary: false
+provider_model: gpt-4o-mini
+api_key: YOUR_API_KEY_HERE
+base_url: https://api.openai.com/v1
+provider_type: openai
+context_window: 32000
+system_token_budget: 2000
+system_prompt_extra: "You tend to focus on logical consistency and factual accuracy. You are direct and concise."
+YAML
+
+  cat > "$DEMO_DIR/roles/reviewer_b.yaml" <<'YAML'
+id: reviewer_b
+primary: false
+provider_model: gpt-4o-mini
+api_key: YOUR_API_KEY_HERE
+base_url: https://api.openai.com/v1
+provider_type: openai
+context_window: 32000
+system_token_budget: 2000
+system_prompt_extra: "You tend to focus on practical implications and edge cases. You play devil's advocate."
+YAML
+
+  # Flow 1: Direct — single shot, no collaboration
   cat > "$DEMO_DIR/flows/direct.yaml" <<'YAML'
 id: direct
-output_node: node_1
+output_node: node_answer
 nodes:
-  - id: node_1
+  - id: node_answer
     type: serial
     role_id: assistant
-    prompt: "You are a helpful assistant. Answer clearly and concisely."
+    prompt: |
+      You are a helpful, clear-thinking assistant.
+      Answer the user's question directly and thoroughly.
+      If the question is simple, be concise. If it's complex, break it down step by step.
+YAML
+
+  # Flow 2: Review — draft → parallel review → revise loop
+  cat > "$DEMO_DIR/flows/review.yaml" <<'YAML'
+id: review
+output_node: node_final
+max_rounds: 5
+nodes:
+  - id: node_draft
+    type: serial
+    role_id: assistant
+    prompt: |
+      You are writing an initial draft response to the user's question.
+      Be thorough and accurate. This draft will be reviewed by peers before finalizing.
+      Write your complete draft response now.
+    next: node_review_group
+
+  - id: node_review_group
+    type: parallel
+    roles:
+      - reviewer_a
+      - reviewer_b
+    prompt: |
+      Review the draft response above. Identify any issues using this severity scale:
+      - P0: Critical error (factually wrong, logically flawed, misleading)
+      - P1: Significant issue (incomplete, unclear, important nuance missing)
+      - P2: Minor improvement (better phrasing, additional examples)
+
+      Format your review as:
+      P0 issues: [list or "none"]
+      P1 issues: [list or "none"]
+      P2 issues: [list or "none"]
+      Summary: [brief overall assessment]
+    next: node_judge
+
+  - id: node_judge
+    type: serial
+    role_id: assistant
+    prompt: |
+      You have received peer reviews of your draft. Analyze the feedback:
+
+      1. If both reviewers found NO P0 or P1 issues: output {"signal": "terminate"} to finalize.
+      2. If there are P0 or P1 issues: revise your response addressing all critical feedback,
+         then output {"route": "node_review_group"} to send back for another review round.
+
+      Always output the signal/route JSON on its own line at the end of your response.
+    next: node_final
+
+  - id: node_final
+    type: serial
+    role_id: assistant
+    prompt: |
+      Based on all the drafts and reviews above, write the final polished response to the user.
+      This is the version the user will see — make it clear, accurate, and well-structured.
+YAML
+
+  # Flow 3: Debate — multi-perspective → find common ground → synthesize
+  cat > "$DEMO_DIR/flows/debate.yaml" <<'YAML'
+id: debate
+output_node: node_synthesis
+nodes:
+  - id: node_perspectives
+    type: parallel
+    roles:
+      - reviewer_a
+      - reviewer_b
+    prompt: |
+      The user has raised a question that involves value judgments or multiple valid perspectives.
+      Present your distinct viewpoint on this topic:
+      - State your position clearly
+      - Provide 2-3 strongest arguments supporting it
+      - Acknowledge the strongest counterargument to your position
+      Be intellectually honest — aim to find truth, not just win.
+    next: node_common_ground
+
+  - id: node_common_ground
+    type: serial
+    role_id: assistant
+    prompt: |
+      You have received arguments from multiple perspectives above.
+      Your task: identify the deepest level of agreement.
+
+      1. Find the core assumptions ALL perspectives share
+      2. Identify exactly WHERE they diverge and WHY (values? facts? definitions?)
+      3. If there's a factual dispute, note what evidence would resolve it
+      4. If it's a values dispute, articulate the tradeoff clearly without taking sides
+
+      Output a structured analysis of the convergence/divergence.
+    next: node_synthesis
+
+  - id: node_synthesis
+    type: serial
+    role_id: assistant
+    prompt: |
+      Based on all perspectives and the common ground analysis above,
+      synthesize a final response for the user that:
+      - Presents the strongest version of each key position fairly
+      - Highlights genuine areas of consensus
+      - Clarifies the exact nature of remaining disagreements
+      - Helps the user form their own informed view
+      Do NOT force a false consensus. Intellectual honesty over false balance.
 YAML
 
   echo ""
   echo "  Demo instance created at: $DEMO_DIR"
-  echo "  ⚠  Edit $DEMO_DIR/roles/assistant.yaml"
-  echo "     and replace YOUR_API_KEY_HERE with your actual API key"
-  echo "     then run: supermodel start"
+  echo "  ⚠  Edit role files in $DEMO_DIR/roles/"
+  echo "     Replace YOUR_API_KEY_HERE with your actual API key in all 3 role files"
+  echo "     Then run: supermodel start"
   echo ""
-  print_ok "Demo instance ready"
+  print_ok "Demo instance ready (direct / review / debate flows)"
 fi
 
 # ── Install supermodel CLI wrapper ───────────────────────────
