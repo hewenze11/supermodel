@@ -173,7 +173,7 @@ print_ok "Config at $CONFIG_FILE"
 DEMO_DIR="$MODELS_DIR/demo-instance"
 if [ ! -d "$DEMO_DIR" ]; then
   print_step "Creating demo instance"
-  mkdir -p "$DEMO_DIR/roles" "$DEMO_DIR/flows"
+  mkdir -p "$DEMO_DIR/roles" "$DEMO_DIR/flows" "$DEMO_DIR/prompts" "$DEMO_DIR/tools"
 
   cat > "$DEMO_DIR/roles/assistant.yaml" <<'YAML'
 id: assistant
@@ -328,8 +328,59 @@ nodes:
       Do NOT force a false consensus. Intellectual honesty over false balance.
 YAML
 
+  # ── prompts/ directory: dispatch and shared system prompts ──
+  cat > "$DEMO_DIR/prompts/dispatch.yaml" <<'YAML'
+# dispatch.yaml — 调度提示词（当配置了 dispatch 规则时使用）
+# SuperModel 会在调度阶段将此提示词附加给调度 AI，帮助它决定使用哪个发言流。
+#
+# 示例：根据用户意图路由到不同发言流
+# - 需要深度分析 / 争议话题 → debate（辩论流）
+# - 需要校对 / 代码审查    → review（审查流）
+# - 普通问答 / 快速回复    → direct（直接回答）
+#
+# 注意：此文件仅在 config.yaml 中配置了 dispatch 时生效。
+#       单实例单发言流场景无需配置 dispatch。
+dispatch_prompt: |
+  You are a routing assistant. Based on the user's message, choose the most appropriate flow:
+  - "debate": for controversial topics, complex questions needing multiple perspectives
+  - "review": for code review, fact-checking, or content that needs quality verification  
+  - "direct": for straightforward questions, casual conversation, quick lookups
+  Output only the flow name, nothing else.
+YAML
+
+  # ── tools/ directory: tool integration examples ──────────────
+  cat > "$DEMO_DIR/tools/web_search.yaml.example" <<'YAML'
+# web_search.yaml.example — Web 搜索工具示例（以 Serper 为例）
+# 使用前：
+#   1. 将本文件重命名为 web_search.yaml
+#   2. 将 YOUR_SERPER_API_KEY 替换为真实的 Serper API Key（https://serper.dev）
+#   3. 在需要搜索能力的发言流节点中加入 tools: [web_search]
+#
+# 重要：工具参数名 (q) 必须和目标 API 期望的字段名一致
+id: web_search
+name: web_search
+description: "搜索互联网上的最新信息，获取实时新闻、价格、事件等"
+endpoint: "https://google.serper.dev/search"
+headers:
+  X-API-KEY: "YOUR_SERPER_API_KEY"
+parameters:
+  type: object
+  properties:
+    q:
+      type: string
+      description: "搜索关键词"
+  required: [q]
+timeout_seconds: 15
+YAML
+
   echo ""
   echo "  Demo instance created at: $DEMO_DIR"
+  echo "  Directory structure:"
+  echo "    roles/    — AI 角色配置（API key、模型、人设）"
+  echo "    flows/    — 发言流配置（节点顺序、提示词）"
+  echo "    prompts/  — 系统提示词（dispatch 路由提示词等）"
+  echo "    tools/    — 工具集成（web search、code executor 等）"
+  echo ""
   echo "  ⚠  Edit role files in $DEMO_DIR/roles/"
   echo "     Replace YOUR_API_KEY_HERE with your actual API key in all 3 role files"
   echo "     Then run: supermodel start"
