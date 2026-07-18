@@ -5,6 +5,41 @@ import { db } from '../db';
 import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfig, ToolNodeConfig, ToolConfig } from '../config/types';
 
 // ============================================================
+// SSRF guard: reject tool endpoints pointing to private/loopback addresses
+// ============================================================
+const PRIVATE_CIDR_REGEX = [
+  /^127\./,                           // loopback
+  /^0\./,                             // 0.x.x.x
+  /^10\./,                            // RFC1918
+  /^172\.(1[6-9]|2\d|3[01])\./,      // RFC1918
+  /^192\.168\./,                      // RFC1918
+  /^169\.254\./,                      // link-local
+  /^::1$/,                            // IPv6 loopback
+  /^fc[0-9a-f]{2}:/i,                 // IPv6 unique local
+  /^fd[0-9a-f]{2}:/i,
+  /^fe80:/i,                          // IPv6 link-local
+  /^localhost$/i,
+];
+
+function validateToolEndpoint(endpoint: string): void {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error(`Tool endpoint is not a valid URL: ${endpoint}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Tool endpoint must use http(s): ${endpoint}`);
+  }
+  const hostname = url.hostname;
+  for (const re of PRIVATE_CIDR_REGEX) {
+    if (re.test(hostname)) {
+      throw new Error(`Tool endpoint points to a private/loopback address which is not allowed: ${endpoint}`);
+    }
+  }
+}
+
+// ============================================================
 // 控制信号正则：在末尾 1KB 内查找 terminate/route 信号
 // 架构书 M2.5：terminate → {"signal":"terminate"} 或 {"signal":"terminate"...}
 //             route    → {"route":"flowId"} (route 字段，非 signal)
@@ -72,6 +107,8 @@ export class FlowEngine {
     const ctrl = this.activeExecutions.get(executionId);
     if (!ctrl) return false;
     ctrl.abort();
+    // Eagerly remove so the slot is freed immediately
+    this.activeExecutions.delete(executionId);
     return true;
   }
 
@@ -84,15 +121,16 @@ export class FlowEngine {
     instanceName: string,
     abortController?: AbortController
   ): Promise<FlowExecutionResult> {
-    const chunks: StreamChunk[] = [];
-    let result!: FlowExecutionResult;
-    for await (const chunk of this.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController)) {
-      chunks.push(chunk);
-      if ((chunk as any).__flowResult) {
-        result = (chunk as any).__flowResult;
+    // Drive the generator manually to capture the return value (not yielded)
+    const gen = this.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController);
+    while (true) {
+      const { value, done } = await gen.next();
+      if (done) {
+        // value here is the FlowExecutionResult return value
+        return value as FlowExecutionResult;
       }
+      // Ignore yielded stream chunks in non-streaming mode
     }
-    return result;
   }
 
   // Main streaming execute — yields SSE-compatible StreamChunk objects
@@ -125,9 +163,13 @@ export class FlowEngine {
     let totalCompletion = 0;
     const byRoleUsage: Record<string, { prompt_tokens: number; completion_tokens: number }> = {};
 
-    // flow-level timeout: 5 min
+    // flow-level timeout from config (default 5 min); track whether abort was from timer
     const FLOW_TIMEOUT_MS = 5 * 60 * 1000;
-    const flowTimer = setTimeout(() => abort.abort(), FLOW_TIMEOUT_MS);
+    let abortedByGlobalTimeout = false;
+    const flowTimer = setTimeout(() => {
+      abortedByGlobalTimeout = true;
+      abort.abort();
+    }, FLOW_TIMEOUT_MS);
 
     const addUsage = (roleId: string, prompt: number, completion: number) => {
       totalPrompt += prompt;
@@ -144,8 +186,10 @@ export class FlowEngine {
 
       while (true) {
         if (abort.signal.aborted) {
-          db.prepare(SQL_UPDATE_FLOW_ABORTED).run(Date.now(), executionId);
-          return { id: executionId, status: 'aborted', output: outputText, rounds: round, finishReason: 'aborted', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
+          const abortReason = abortedByGlobalTimeout ? 'global_timeout' : 'cancelled_by_user';
+          const abortStatus = abortedByGlobalTimeout ? 'timeout' : 'aborted';
+          db.prepare(SQL_UPDATE_FLOW_DONE).run(abortStatus, abortReason, Date.now(), round, executionId);
+          return { id: executionId, status: abortStatus, output: outputText, rounds: round, finishReason: abortReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
         }
 
         const node = nodeMap.get(currentNodeId);
@@ -378,6 +422,8 @@ export class FlowEngine {
           const toolAbort = new AbortController();
           const toolTimer = setTimeout(() => toolAbort.abort(), toolTimeoutMs);
           try {
+            // SSRF guard: validate endpoint before fetch
+            validateToolEndpoint(tool.endpoint);
             const resp = await fetch(tool.endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...(tool.headers ?? {}) },
@@ -413,12 +459,10 @@ export class FlowEngine {
       // Finalize flow
       const status = finishReason === 'max_rounds_reached' ? 'completed' : 'completed';
       db.prepare(SQL_UPDATE_FLOW_DONE).run(status, finishReason ?? 'stop', Date.now(), round, executionId);
-      this.activeExecutions.delete(executionId);
       return { id: executionId, status: 'completed', output: outputText, rounds: round, finishReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
 
     } catch (err: any) {
       db.prepare(SQL_UPDATE_FLOW_FAILED).run(err.message ?? 'unknown_error', Date.now(), 0, executionId);
-      this.activeExecutions.delete(executionId);
       throw err;
     } finally {
       clearTimeout(flowTimer);

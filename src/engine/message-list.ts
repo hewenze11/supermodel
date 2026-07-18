@@ -202,7 +202,7 @@ export class MessageList {
 
     // 末尾必须是 user（某些 API 要求）
     if (result[result.length - 1]?.role === 'assistant') {
-      result.push({ role: 'user', content: '(please continue)' });
+      result.push({ role: 'user', content: '(role-alternation-placeholder: ignore this message)' });
     }
 
     return result;
