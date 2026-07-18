@@ -122,16 +122,18 @@ export class LLMClient {
       
       console.log(`Making request to OpenAI API: ${baseUrl}/chat/completions with headers: ${JSON.stringify(requestHeaders)}`);
       
+      // Build body - exclude non-serializable signal, explicitly set stream:false
+      const { signal: _sig, stream_options: _so, ...serializableRequest } = request as any;
+      const bodyObj = { ...serializableRequest, stream: false };
+      console.log(`[TOOL-CALL-BODY] keys=${Object.keys(bodyObj).join(',')}, has_tools=${!!bodyObj.tools}, stream=${bodyObj.stream}`);
+      
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.config.api_key}`
         },
-        body: JSON.stringify({
-          ...request,
-          stream: false
-        }),
+        body: JSON.stringify(bodyObj),
         signal: controller.signal
       });
 
