@@ -7,6 +7,29 @@ import { useRouter } from 'next/navigation';
 interface Message { role: 'user' | 'assistant'; content: string; }
 interface ModelOption { id: string; display_name: string; }
 
+const CHAT_STORAGE_KEY = 'sm_chat_history_v1';
+const CHAT_MODEL_KEY   = 'sm_chat_model_v1';
+
+function loadHistory(model: string): Message[] {
+  try {
+    const raw = sessionStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return [];
+    const all = JSON.parse(raw) as Record<string, Message[]>;
+    return all[model] ?? [];
+  } catch { return []; }
+}
+
+function saveHistory(model: string, msgs: Message[]) {
+  try {
+    // Guard against prototype pollution from model name
+    if (model === '__proto__' || model === 'constructor' || model === 'prototype') return;
+    const raw = sessionStorage.getItem(CHAT_STORAGE_KEY);
+    const all = raw ? JSON.parse(raw) as Record<string, Message[]> : {};
+    all[model] = msgs.slice(-60); // keep last 60 messages per model
+    sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(all));
+  } catch { /* storage full or unavailable */ }
+}
+
 export default function ChatPage() {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
@@ -19,6 +42,7 @@ export default function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
+  // Restore last selected model on mount
   useEffect(() => {
     if (!getToken()) { router.replace('/login/'); return; }
     apiStatus().then(d => {
@@ -29,9 +53,23 @@ export default function ChatPage() {
         }
       }
       setModels(opts);
-      if (opts.length) setSelectedModel(opts[0].id);
+      // Restore last used model, fall back to first
+      const savedModel = sessionStorage.getItem(CHAT_MODEL_KEY);
+      const initial = savedModel && opts.find(o => o.id === savedModel) ? savedModel : (opts[0]?.id ?? '');
+      setSelectedModel(initial);
+      if (initial) setMessages(loadHistory(initial));
     }).catch(() => router.replace('/login/'));
   }, [router]);
+
+  // When model changes: persist choice + load that model's history
+  const handleModelChange = (newModel: string) => {
+    // Persist current model selection
+    sessionStorage.setItem(CHAT_MODEL_KEY, newModel);
+    setSelectedModel(newModel);
+    setMessages(loadHistory(newModel));
+    setLastUsage(null);
+    setError('');
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,9 +77,11 @@ export default function ChatPage() {
 
   const send = useCallback(() => {
     if (!input.trim() || streaming || !selectedModel) return;
+    const modelAtSend = selectedModel; // capture to avoid closure race if model changes mid-stream
     const userMsg: Message = { role: 'user', content: input.trim() };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
+    saveHistory(modelAtSend, newMessages);
     setInput('');
     setError('');
     setStreaming(true);
@@ -51,7 +91,7 @@ export default function ChatPage() {
     setMessages(m => [...m, { role: 'assistant', content: '' }]);
 
     const stop = apiTestStream(
-      selectedModel,
+      modelAtSend,
       newMessages,
       (delta) => {
         setMessages(m => {
@@ -65,6 +105,11 @@ export default function ChatPage() {
         stopRef.current = null;
         if (finalChunk?.usage) setLastUsage(finalChunk.usage);
         if (finalChunk?.x_supermodel_usage) setLastUsage(finalChunk.x_supermodel_usage);
+        // Persist completed conversation under the model that was active when send() was called
+        setMessages(m => {
+          saveHistory(modelAtSend, m);
+          return m;
+        });
       },
       (e) => {
         setError(e);
@@ -83,6 +128,7 @@ export default function ChatPage() {
 
   function clearChat() {
     setMessages([]);
+    saveHistory(selectedModel, []);
     setLastUsage(null);
     setError('');
   }
@@ -95,7 +141,7 @@ export default function ChatPage() {
         <div className="flex items-center gap-2">
           <select
             value={selectedModel}
-            onChange={e => setSelectedModel(e.target.value)}
+            onChange={e => handleModelChange(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-gray-800"
           >
             {models.map(m => (

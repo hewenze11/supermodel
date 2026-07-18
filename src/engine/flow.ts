@@ -213,6 +213,10 @@ export class FlowEngine {
     let totalCompletion = 0;
     const byRoleUsage: Record<string, { prompt_tokens: number; completion_tokens: number }> = {};
 
+    // Execution log: tracks each node visit for the final summary
+    interface NodeLog { nodeId: string; roleId: string; status: 'ok' | 'failed' | 'timeout' | 'skipped'; durationMs?: number; note?: string; }
+    const executionLog: NodeLog[] = [];
+
     // flow-level timeout: read from flowConfig, fallback to 300s (5 min), clamp 1s-3600s
     const FLOW_TIMEOUT_MS = Math.min(Math.max((flowConfig.timeout_seconds ?? 300) * 1000, 1000), 3600_000);
     let abortedByGlobalTimeout = false;
@@ -269,6 +273,7 @@ export class FlowEngine {
           const snapshot = messageList.getInputMessagesSnapshot();
 
           db.prepare(SQL_INSERT_NODE).run(nodeExecId, executionId, sNode.id, sNode.role_id, round, 'running', Date.now(), snapshot);
+          const nodeStartMs = Date.now();
 
           const client = new LLMClient({
             provider_type: role.provider_type ?? 'openai',
@@ -397,22 +402,26 @@ export class FlowEngine {
               if (abort.signal.aborted) {
                 // Flow-level abort — let the outer while-loop handle DB update on next iteration
                 db.prepare(SQL_UPDATE_NODE_FAILED).run('aborted', Date.now(), 'Aborted by flow cancellation', nodeExecId);
+                executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: 'Aborted by flow cancellation' });
                 // Re-check abort at top of loop
                 continue;
               }
               // Node-level timeout only
               db.prepare(SQL_UPDATE_NODE_FAILED).run('timeout', Date.now(), 'Node execution timed out', nodeExecId);
               db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_timeout', Date.now(), round, executionId);
+              executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'timeout', durationMs: Date.now() - nodeStartMs, note: 'Node execution timed out' });
               return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'node_timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
             }
             db.prepare(SQL_UPDATE_NODE_FAILED).run('failed', Date.now(), err.message ?? 'Unknown error', nodeExecId);
             db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_error', Date.now(), round, executionId);
+            executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: err.message ?? 'Unknown error' });
             throw err;
           }
 
           db.prepare(SQL_UPDATE_NODE_SUCCESS).run(Date.now(), nodeOutput.slice(0, 4000), nodePrompt, nodeCompletion, nodeExecId);
           db.prepare(SQL_INSERT_USAGE).run(executionId, nodeExecId, sNode.role_id, role.provider_model, nodePrompt, nodeCompletion);
           addUsage(sNode.role_id, nodePrompt, nodeCompletion);
+          executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'ok', durationMs: Date.now() - nodeStartMs });
 
           // Check if judge (has next = loop back toward first node) — increment judgeRounds
           if (sNode.next) judgeRounds++;
@@ -524,11 +533,14 @@ export class FlowEngine {
                 mergedParts.push(`=== 幕僚 ${roleId} (${modelName}) 审查结果 ===\n${v.output}`);
                 db.prepare(SQL_INSERT_USAGE).run(executionId, v.nodeExecId, roleId, modelName, v.prompt, v.completion);
                 addUsage(roleId, v.prompt, v.completion);
+                executionLog.push({ nodeId: pNode.id, roleId, status: 'ok' });
               } else {
                 mergedParts.push(`=== 注意：${roleId} 执行失败（${v.error}），该视角缺失 ===`);
+                executionLog.push({ nodeId: pNode.id, roleId, status: 'failed', note: v.error });
               }
             } else {
               mergedParts.push(`=== 注意：${roleId} 执行失败，该视角缺失 ===`);
+              executionLog.push({ nodeId: pNode.id, roleId, status: 'failed', note: 'Promise rejected' });
             }
           }
 
@@ -603,6 +615,40 @@ export class FlowEngine {
       // Finalize flow
       const status = finishReason === 'max_rounds_reached' ? 'completed' : 'completed';
       db.prepare(SQL_UPDATE_FLOW_DONE).run(status, finishReason ?? 'stop', Date.now(), round, executionId);
+
+      // Build execution summary and yield as extra SSE content (only for multi-node flows or if any issue)
+      // NOTE: summaryText is NOT mixed into outputText to preserve original LLM output integrity in DB
+      const hasMultipleNodes = flowConfig.nodes.length > 1;
+      const hasAnyIssue = executionLog.some(l => l.status !== 'ok');
+      if (hasMultipleNodes || hasAnyIssue) {
+        const summaryLines: string[] = [];
+        summaryLines.push('\n\n---\n**[执行摘要]**');
+        const visited = new Set<string>();
+        for (const log of executionLog) {
+          const key = `${log.nodeId}:${log.roleId}`;
+          if (visited.has(key)) continue;
+          visited.add(key);
+          const icon = log.status === 'ok' ? '✅' : log.status === 'timeout' ? '⏱️' : '❌';
+          let line = `\n${icon} ${log.nodeId} (${log.roleId})`;
+          if (log.durationMs !== undefined) line += ` — ${(log.durationMs / 1000).toFixed(1)}s`;
+          if (log.note && log.status !== 'ok') line += ` — ${log.note}`;
+          summaryLines.push(line);
+        }
+        if (finishReason === 'max_rounds_reached') {
+          summaryLines.push(`\n⚠️ 达到最大轮次上限 (${maxRounds})，提前终止`);
+        }
+        const summaryText = summaryLines.join('');
+        // Yield summary as SSE delta so it appears in the stream — separate from outputText (DB record)
+        const summaryChunkId = `chatcmpl-summary-${uuidv4()}`;
+        yield {
+          id: summaryChunkId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: instanceName,
+          choices: [{ index: 0, delta: { content: summaryText }, finish_reason: null }]
+        } as StreamChunk;
+      }
+
       const flowResult: FlowExecutionResult = { id: executionId, status: 'completed', output: outputText, rounds: round, finishReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
       // Yield a marker chunk so streaming consumers (inference route) can capture the result
       yield { __flowResult: flowResult } as unknown as StreamChunk;
