@@ -6,7 +6,27 @@ import { db } from '../db';
 import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfig, ToolNodeConfig, ToolConfig } from '../config/types';
 
 // ============================================================
-// SSRF guard: reject tool endpoints pointing to private/loopback addresses
+// combineAbortSignals: polyfill for AbortSignal.any() (Node 20+)
+// Falls back to addEventListener bridge for older Node versions
+// ============================================================
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  // Use native AbortSignal.any if available (Node 20+)
+  if (typeof (AbortSignal as any).any === 'function') {
+    return (AbortSignal as any).any(signals);
+  }
+  // Polyfill: bridge all signals into a new controller
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  for (const sig of signals) {
+    if (sig.aborted) { ctrl.abort(); break; }
+    sig.addEventListener('abort', onAbort, { once: true });
+  }
+  // Cleanup listeners when combined signal fires
+  ctrl.signal.addEventListener('abort', () => {
+    for (const sig of signals) sig.removeEventListener('abort', onAbort);
+  }, { once: true });
+  return ctrl.signal;
+}
 // Performs both static regex check AND DNS resolution check (defeats DNS rebinding)
 // ============================================================
 const PRIVATE_IP_REGEX = [
@@ -263,10 +283,8 @@ export class FlowEngine {
           const nodeTimeoutMs = 60_000;
           const nodeAbort = new AbortController();
           const nodeTimer = setTimeout(() => nodeAbort.abort(), nodeTimeoutMs);
-          // Use AbortSignal.any to avoid listener leaks (Node 18+)
-          const combinedSignal = (AbortSignal as any).any
-            ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
-            : abort.signal; // fallback for older Node
+          // Combine flow abort + node timeout, with polyfill for older Node
+          const combinedSignal = combineAbortSignals(abort.signal, nodeAbort.signal);
 
           try {
             // Is this the output node — we stream to client
@@ -387,9 +405,7 @@ export class FlowEngine {
               const nodeAbort = new AbortController();
               const timer = setTimeout(() => nodeAbort.abort(), timeoutMs);
               // Combine flow-level abort with node timeout (P1 fix: parallel node respects flow cancel)
-              const parallelCombinedSignal = (AbortSignal as any).any
-                ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
-                : abort.signal;
+              const parallelCombinedSignal = combineAbortSignals(abort.signal, nodeAbort.signal);
               try {
                 for await (const chunk of client.streamChatCompletion({ messages: msgs, model: role.provider_model, stream: true, stream_options: { include_usage: true }, signal: parallelCombinedSignal })) {
                   if (parallelCombinedSignal.aborted) break;
@@ -465,9 +481,7 @@ export class FlowEngine {
           const toolAbort = new AbortController();
           const toolTimer = setTimeout(() => toolAbort.abort(), toolTimeoutMs);
           // Combine flow-level abort with tool timeout (P1 fix: tool respects flow cancel)
-          const toolCombinedSignal = (AbortSignal as any).any
-            ? (AbortSignal as any).any([abort.signal, toolAbort.signal])
-            : abort.signal;
+          const toolCombinedSignal = combineAbortSignals(abort.signal, toolAbort.signal);
           try {
             // SSRF guard: validate endpoint before fetch
             await validateToolEndpoint(tool.endpoint);
@@ -520,5 +534,6 @@ export class FlowEngine {
     }
   }
 }
+
 
 
