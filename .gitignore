@@ -13,7 +13,8 @@ __pycache__/
 .idea/
 *.swp
 *.swo
-config/
+# Only ignore root-level config/ directory (user config), not src/config/
+/config/
 *.db
 *.db-shm
 *.db-wal
