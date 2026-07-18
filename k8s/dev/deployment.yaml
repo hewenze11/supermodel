@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supermodel-dev
+  namespace: dev-supermodel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: supermodel-dev
+  template:
+    metadata:
+      labels:
+        app: supermodel-dev
+    spec:
+      containers:
+      - name: supermodel
+        image: 172.236.254.239:30880/supermodel:dev-latest
+        ports:
+        - containerPort: 11451
+        - containerPort: 11435
+        env:
+        - name: NODE_ENV
+          value: "development"
+        volumeMounts:
+        - name: supermodel-config
+          mountPath: /root/.supermodel
+        - name: supermodel-data
+          mountPath: /app/data
+      volumes:
+      - name: supermodel-config
+        hostPath:
+          path: /root/.supermodel
+          type: DirectoryOrCreate
+      - name: supermodel-data
+        hostPath:
+          path: /app/data
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supermodel-service-dev
+  namespace: dev-supermodel
+spec:
+  selector:
+    app: supermodel-dev
+  ports:
+    - protocol: TCP
+      port: 11451
+      targetPort: 11451
+      name: inference
+    - protocol: TCP
+      port: 11435
+      targetPort: 11435
+      name: admin
+  type: ClusterIP

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supermodel-prod
+  namespace: supermodel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: supermodel-prod
+  template:
+    metadata:
+      labels:
+        app: supermodel-prod
+    spec:
+      containers:
+      - name: supermodel
+        image: 172.236.254.239:30880/supermodel:prod-latest
+        ports:
+        - containerPort: 11451
+        - containerPort: 11435
+        env:
+        - name: NODE_ENV
+          value: "production"
+        volumeMounts:
+        - name: supermodel-config
+          mountPath: /root/.supermodel
+        - name: supermodel-data
+          mountPath: /app/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /admin/status
+            port: 11435
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /admin/status
+            port: 11435
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: supermodel-config
+        hostPath:
+          path: /root/.supermodel
+          type: DirectoryOrCreate
+      - name: supermodel-data
+        hostPath:
+          path: /app/data
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supermodel-service-prod
+  namespace: supermodel
+spec:
+  selector:
+    app: supermodel-prod
+  ports:
+    - protocol: TCP
+      port: 11451
+      targetPort: 11451
+      name: inference
+    - protocol: TCP
+      port: 11435
+      targetPort: 11435
+      name: admin
+  type: ClusterIP

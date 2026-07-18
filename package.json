@@ -1,0 +1,42 @@
+{
+  "name": "supermodel",
+  "version": "1.0.0",
+  "description": "A Node.js single-process service for AI inference with OpenAI-compatible API",
+  "main": "dist/index.js",
+  "bin": {
+    "supermodel": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "cli": "node dist/cli/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "inference",
+    "openai-api"
+  ],
+  "author": "Supermodel Team",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/static": "^7.0.1",
+    "better-sqlite3": "^9.4.3",
+    "fastify": "^4.26.1",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^2.7.0",
+    "pino": "^8.18.0",
+    "typescript": "^5.3.3",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.43",
+    "@types/uuid": "^9.0.8",
+    "ts-node": "^10.9.2"
+  }
+}

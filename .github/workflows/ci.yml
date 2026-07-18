@@ -1,0 +1,86 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ dev, main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Harbor
+      uses: docker/login-action@v3
+      with:
+        registry: 172.236.254.239:30880
+        username: ${{ secrets.HARBOR_USERNAME }}
+        password: ${{ secrets.HARBOR_PASSWORD }}
+        
+    - name: Extract branch name
+      shell: bash
+      run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
+      
+    - name: Get short SHA
+      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+      
+    - name: Build and push dev
+      if: env.BRANCH_NAME == 'dev'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: |
+          172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}
+          172.236.254.239:30880/supermodel:dev-latest
+        build-args: |
+          NODE_ENV=development
+          
+    - name: Build and push prod
+      if: env.BRANCH_NAME == 'main'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        tags: |
+          172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}
+          172.236.254.239:30880/supermodel:prod-latest
+        build-args: |
+          NODE_ENV=production
+          
+    - name: Update Kubernetes manifests for dev
+      if: env.BRANCH_NAME == 'dev'
+      run: |
+        sed -i "s|172.236.254.239:30880/supermodel:dev-[a-z0-9]*|172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}|g" k8s/dev/deployment.yaml
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add k8s/dev/deployment.yaml
+        git commit -m "Update dev deployment image tag [skip ci]" || exit 0
+        git push origin dev || exit 0
+        
+    - name: Update Kubernetes manifests for prod
+      if: env.BRANCH_NAME == 'main'
+      run: |
+        sed -i "s|172.236.254.239:30880/supermodel:prod-[a-z0-9]*|172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}|g" k8s/prod/deployment.yaml
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add k8s/prod/deployment.yaml
+        git commit -m "Update prod deployment image tag [skip ci]" || exit 0
+        git push origin main || exit 0
+
+    - name: Notify Feishu
+      run: |
+        curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099 \
+        -H 'Content-Type: application/json' \
+        -d "{
+          \"msg_type\": \"text\",
+          \"content\": {
+            \"text\": \"[CI/CD] SuperModel build completed - Branch: ${{ env.BRANCH_NAME }}, Commit: ${{ env.SHORT_SHA }}, Status: Success\"
+          }
+        }"
+      if: always()
