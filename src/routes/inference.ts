@@ -176,7 +176,16 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     if (configRegistry.loadedInstances) {
       for (const [instName, inst] of configRegistry.loadedInstances) {
         for (const [flowName] of inst.flows) {
-          models.push({ id: flowName, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'supermodel' });
+          // Use instName/flowName as canonical id to guarantee uniqueness across instances
+          // Also expose bare flowName as an alias in the display name for convenience
+          models.push({
+            id: `${instName}/${flowName}`,
+            object: 'model',
+            created: Math.floor(Date.now() / 1000),
+            owned_by: 'supermodel',
+            // Non-standard field for UX: show human-readable name
+            display_name: flowName
+          });
         }
       }
     }

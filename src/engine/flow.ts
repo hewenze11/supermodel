@@ -177,6 +177,12 @@ export class FlowEngine {
     const nodeMap = new Map<string, NodeConfig>();
     for (const n of flowConfig.nodes) nodeMap.set(n.id, n);
 
+    // P0 guard: empty nodes or invalid output_node → fail fast
+    if (!flowConfig.nodes?.length) throw new Error(`Flow '${flowConfig.id}' has no nodes`);
+    if (flowConfig.output_node && !nodeMap.has(flowConfig.output_node)) {
+      throw new Error(`Flow '${flowConfig.id}' output_node '${flowConfig.output_node}' not found in nodes`);
+    }
+
     const maxRounds = flowConfig.max_rounds ?? 10;
     let judgeRounds = 0;
     let outputText = '';
@@ -254,14 +260,15 @@ export class FlowEngine {
           let nodePrompt = 0;
           let nodeCompletion = 0;
 
+          const nodeTimeoutMs = 60_000;
+          const nodeAbort = new AbortController();
+          const nodeTimer = setTimeout(() => nodeAbort.abort(), nodeTimeoutMs);
+          // Use AbortSignal.any to avoid listener leaks (Node 18+)
+          const combinedSignal = (AbortSignal as any).any
+            ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
+            : abort.signal; // fallback for older Node
+
           try {
-            const nodeTimeoutMs = 60_000;
-            const nodeAbort = new AbortController();
-            const nodeTimer = setTimeout(() => nodeAbort.abort(), nodeTimeoutMs);
-            // Use AbortSignal.any to avoid listener leaks (Node 18+)
-            const combinedSignal = (AbortSignal as any).any
-              ? (AbortSignal as any).any([abort.signal, nodeAbort.signal])
-              : abort.signal; // fallback for older Node
             // Is this the output node — we stream to client
             const isOutputNode = (sNode.id === flowConfig.output_node);
 
@@ -286,9 +293,18 @@ export class FlowEngine {
             clearTimeout(nodeTimer);
           } catch (err: any) {
             if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+              clearTimeout(nodeTimer);
+              // Distinguish: flow-level abort (global timeout or user cancel) vs node timeout
+              if (abort.signal.aborted) {
+                // Flow-level abort — let the outer while-loop handle DB update on next iteration
+                db.prepare(SQL_UPDATE_NODE_FAILED).run('failed', Date.now(), 'Aborted by flow cancellation', nodeExecId);
+                // Re-check abort at top of loop
+                continue;
+              }
+              // Node-level timeout only
               db.prepare(SQL_UPDATE_NODE_FAILED).run('timeout', Date.now(), 'Node execution timed out', nodeExecId);
               db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_timeout', Date.now(), round, executionId);
-              return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
+              return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'node_timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
             }
             db.prepare(SQL_UPDATE_NODE_FAILED).run('failed', Date.now(), err.message ?? 'Unknown error', nodeExecId);
             db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_error', Date.now(), round, executionId);
