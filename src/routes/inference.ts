@@ -84,7 +84,7 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     // Resolve routing
     const resolved = resolveModel(model, configRegistry);
     if (!resolved) {
-      return reply.status(404).send({ error: { message: `Model not found: ${model}`, type: 'invalid_request_error', code: 'model_not_found' } });
+      return reply.status(404).send({ error: { message: `Model not found: ${model}`, type: 'not_found', code: 'model_not_found' } });
     }
     const { instanceName, flowConfig, roles, tools } = resolved;
 
@@ -146,6 +146,8 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           finalChunk.x_supermodel_usage = flowResult?.byRoleUsage;
         }
         await sseWriter.writeFinal(finalChunk);
+        // Send SSE termination signal per OpenAI spec
+        sseWriter.writeDone();
       } catch (err: any) {
         // Distinguish client disconnect (abort) from real upstream errors
         if (abortController.signal.aborted || err?.name === 'AbortError') {

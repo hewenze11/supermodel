@@ -27,8 +27,13 @@ export class SSEWriter {
   async writeFinal(finalData: any): Promise<void> {
     const chunk = `data: ${JSON.stringify(finalData)}\n\n`;
     this.reply.raw.write(chunk);
-    // Flush the response
+  }
 
+  // Write OpenAI SSE termination marker
+  writeDone(): void {
+    if (!this.reply.raw.destroyed) {
+      this.reply.raw.write('data: [DONE]\n\n');
+    }
   }
 
   // Write an error message
