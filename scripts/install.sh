@@ -20,14 +20,35 @@ print_ok()   { echo -e "\033[1;32m✓ $1\033[0m"; }
 print_err()  { echo -e "\033[1;31m✗ $1\033[0m" >&2; }
 die()        { print_err "$1"; exit 1; }
 
+# ── Install Node.js if missing ───────────────────────────────
+install_node() {
+  echo "Installing Node.js $NODE_MIN_VERSION via NodeSource..."
+  if command -v curl &>/dev/null; then
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x | bash -
+  elif command -v wget &>/dev/null; then
+    wget -qO- https://deb.nodesource.com/setup_${NODE_MIN_VERSION}.x | bash -
+  else
+    die "curl/wget not found. Cannot auto-install Node.js."
+  fi
+  if command -v apt-get &>/dev/null; then
+    apt-get install -y -qq nodejs
+  elif command -v yum &>/dev/null; then
+    yum install -y nodejs
+  else
+    die "Cannot auto-install Node.js. Install manually from https://nodejs.org (>= v$NODE_MIN_VERSION)"
+  fi
+}
+
 # ── Check Node.js ────────────────────────────────────────────
 print_step "Checking Node.js (>= $NODE_MIN_VERSION required)"
 if ! command -v node &>/dev/null; then
-  die "Node.js not found. Install from https://nodejs.org (>= v$NODE_MIN_VERSION)"
+  echo "Node.js not found. Auto-installing..."
+  install_node
 fi
 NODE_VER=$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")
 if [ "$NODE_VER" -lt "$NODE_MIN_VERSION" ]; then
-  die "Node.js v$NODE_VER found, need >= v$NODE_MIN_VERSION. Upgrade at https://nodejs.org"
+  echo "Node.js v$NODE_VER found, need >= v$NODE_MIN_VERSION. Upgrading..."
+  install_node
 fi
 print_ok "Node.js v$(node --version) found"
 
@@ -39,7 +60,16 @@ fi
 # ── Check git ────────────────────────────────────────────────
 print_step "Checking git"
 if ! command -v git &>/dev/null; then
-  die "git not found. Install git first."
+  echo "git not found. Auto-installing..."
+  if command -v apt-get &>/dev/null; then
+    apt-get install -y -qq git
+  elif command -v yum &>/dev/null; then
+    yum install -y git
+  elif command -v apk &>/dev/null; then
+    apk add --no-cache git
+  else
+    die "Cannot auto-install git. Please install it manually."
+  fi
 fi
 print_ok "git found"
 
