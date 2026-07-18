@@ -370,3 +370,17 @@ echo "  ║  Inference:  http://localhost:11451              ║"
 echo "  ║  Admin:      http://localhost:11435 (local only) ║"
 echo "  ╚══════════════════════════════════════════════════╝"
 echo ""
+
+# Always show credentials from config so users can find them after re-install
+if [ -f "$CONFIG_FILE" ]; then
+  _PASS=$(grep 'admin_password' "$CONFIG_FILE" | sed 's/.*admin_password: *"\?\([^"]*\)"\?.*/\1/')
+  _KEY=$(grep -A1 'api_keys:' "$CONFIG_FILE" | grep '^\s*-' | head -1 | sed 's/.*- *"\?\([^"]*\)"\?.*/\1/')
+  echo "  Your credentials (also saved in $CONFIG_FILE):"
+  echo ""
+  echo "    Inference API Key : $_KEY"
+  echo "    Admin password    : $_PASS"
+  echo ""
+  echo "  Open Admin UI: http://$(hostname -I | awk '{print $1}'):11435"
+  echo "  (Admin UI is local-only; use SSH tunnel from remote machines)"
+  echo ""
+fi

@@ -52,6 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/i
     然后运行：supermodel start
 ```
 
+> **忘记密码？** 直接看 `~/.supermodel/config.yaml` 里的 `admin_password` 字段，那就是你的登录密码。
+
 **第二步：填入 API Key**
 
 ```bash
@@ -94,6 +96,12 @@ http://localhost:11435
 - **Models**：查看所有实例、角色、工具配置
 - **History**：每次请求的完整执行记录（每个节点的输出、耗时、token 用量）
 - **Config**：查看服务配置和连接信息
+
+> **管理界面只绑定本机（127.0.0.1）**，从外部无法直接访问。如果服务器是远程机器，用 SSH 隧道转发：
+> ```bash
+> ssh -L 11435:127.0.0.1:11435 root@your-server-ip
+> ```
+> 然后在本地浏览器打开 `http://localhost:11435`。
 
 ---
 
