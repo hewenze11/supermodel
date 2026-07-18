@@ -1,6 +1,8 @@
 export interface LLMMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
 }
 
 // ============================================================
@@ -23,8 +25,10 @@ export interface Message {
 }
 
 export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
 }
 
 // RoleConfig subset needed by buildMessages

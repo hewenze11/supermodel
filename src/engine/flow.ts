@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { promises as dns } from 'dns';
 import { MessageList } from './message-list';
 import { LLMClient, ChatCompletionRequest, StreamChunk } from '../llm/client';
+import { buildOpenAITools, executeToolCall, ToolCall } from './tool-runner';
 import { db } from '../db';
 import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfig, ToolNodeConfig, ToolConfig } from '../config/types';
 
@@ -287,26 +288,105 @@ export class FlowEngine {
           // Combine flow abort + node timeout, with polyfill for older Node
           const combinedSignal = combineAbortSignals(abort.signal, nodeAbort.signal);
 
+          // Resolve tool configs for this node
+          const nodeToolConfigs: ToolConfig[] = [];
+          if (sNode.tools && sNode.tools.length > 0) {
+            for (const toolId of sNode.tools) {
+              const tc = tools.get(toolId);
+              if (tc) nodeToolConfigs.push(tc);
+            }
+          }
+          const openAITools = nodeToolConfigs.length > 0 ? buildOpenAITools(nodeToolConfigs) : undefined;
+
           try {
             // Is this the output node — we stream to client
             const isOutputNode = (sNode.id === flowConfig.output_node);
 
-            for await (const chunk of client.streamChatCompletion({
-              messages: msgs,
-              model: role.provider_model,
-              stream: true,
-              stream_options: { include_usage: true },
-              signal: combinedSignal
-            })) {
-              if (combinedSignal.aborted) break;
-              const delta = chunk.choices?.[0]?.delta?.content;
-              if (delta) {
-                nodeOutput += delta;
-                if (isOutputNode) yield chunk;
+            // ── Tool-call loop (non-streaming) ──────────────────────────────
+            // If this node has tools, run a non-streaming tool-call loop first,
+            // then do a final streaming pass for the output node.
+            let toolCallMsgs = [...msgs];
+            if (openAITools && openAITools.length > 0) {
+              const MAX_TOOL_ROUNDS = 10;
+              for (let tr = 0; tr < MAX_TOOL_ROUNDS; tr++) {
+                const tcResp = await client.chatCompletion({
+                  messages: toolCallMsgs,
+                  model: role.provider_model,
+                  signal: combinedSignal,
+                  // Pass tools in extra fields (typed as any to avoid TS error on non-standard field)
+                  ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {})
+                } as any);
+
+                const choice = tcResp.choices?.[0];
+                const finReason = choice?.finish_reason;
+                const assistantMsg = choice?.message;
+
+                if (tcResp.usage) {
+                  nodePrompt += tcResp.usage.prompt_tokens;
+                  nodeCompletion += tcResp.usage.completion_tokens;
+                }
+
+                if (finReason === 'tool_calls' && assistantMsg?.tool_calls) {
+                  // Append assistant message with tool_calls
+                  toolCallMsgs.push(assistantMsg as any);
+                  // Execute each tool call
+                  const toolResults = await Promise.all(
+                    (assistantMsg.tool_calls as unknown as ToolCall[]).map(tc =>
+                      executeToolCall(tc, tools, combinedSignal)
+                    )
+                  );
+                  // Append tool results as tool messages
+                  for (const tr2 of toolResults) {
+                    toolCallMsgs.push({
+                      role: 'tool' as any,
+                      tool_call_id: tr2.tool_call_id,
+                      content: tr2.content
+                    } as any);
+                  }
+                  console.log(`[tool-call] node=${sNode.id} round=${tr + 1} tools=${assistantMsg.tool_calls.length}`);
+                  continue; // loop
+                }
+
+                // No more tool calls — capture content and break
+                if (assistantMsg?.content) {
+                  nodeOutput = assistantMsg.content as string;
+                }
+                break;
               }
-              if (chunk.usage) {
-                nodePrompt = chunk.usage.prompt_tokens;
-                nodeCompletion = chunk.usage.completion_tokens;
+
+              // If output node: re-run streaming with updated context (no tools this time) for SSE delivery
+              if (isOutputNode && nodeOutput) {
+                // We already have the output from tool-call loop, re-stream it as chunks
+                // by yielding a single synthetic chunk
+                const syntheticChunk: StreamChunk = {
+                  id: `chatcmpl-tool-${Date.now()}`,
+                  object: 'chat.completion.chunk',
+                  created: Math.floor(Date.now() / 1000),
+                  model: role.provider_model,
+                  choices: [{ index: 0, delta: { role: 'assistant', content: nodeOutput }, finish_reason: null }],
+                  usage: undefined
+                };
+                yield syntheticChunk;
+              }
+            } else {
+              // ── Normal streaming path (no tools) ──────────────────────────
+              for await (const chunk of client.streamChatCompletion({
+                messages: msgs,
+                model: role.provider_model,
+                stream: true,
+                stream_options: { include_usage: true },
+                signal: combinedSignal
+              })) {
+                if (combinedSignal.aborted) break;
+                const delta = chunk.choices?.[0]?.delta?.content;
+                if (delta) {
+                  nodeOutput += delta;
+                  if (isOutputNode) yield chunk;
+                }
+                if (chunk.usage) {
+                  nodePrompt = chunk.usage.prompt_tokens;
+                  nodeCompletion = chunk.usage.completion_tokens;
+                }
               }
             }
             clearTimeout(nodeTimer);
