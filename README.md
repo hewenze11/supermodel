@@ -52,6 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/i
     然后运行：supermodel start
 ```
 
+> **注意**：安装输出的 API Key 已经包含 `sm-` 前缀（如 `sm-abc123...`），调用时直接用这个完整字符串，无需手动加前缀。
+
 > **忘记密码？** 直接看 `~/.supermodel/config.yaml` 里的 `admin_password` 字段，那就是你的登录密码。
 
 **第二步：填入 API Key**
