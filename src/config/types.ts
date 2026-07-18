@@ -65,9 +65,13 @@ export interface ToolConfig {
   name: string;                     // 必填，工具显示名
   description: string;              // 必填，AI调用模式时读取（告知AI工具用途）
   endpoint: string;                 // 必填，工具HTTP服务地址
+  parameters?: Record<string, any>; // 工具参数 schema（传给 LLM function calling）
   input_schema?: Record<string, string>; // 可选，仅AI调用模式：字段名→类型描述字符串
-  timeout_seconds?: number;         // default: 30；编排器侧强制超时，超时后直接判定失败
-  headers?: Record<string, string>; // 可选，自定义 HTTP 请求头（如 Authorization、X-API-Key 等）
+  timeout_seconds?: number;         // default: 10；超时后判定失败
+  headers?: Record<string, string>; // 可选，自定义 HTTP 请求头（如 X-API-KEY）
+  // request_body_mode: "passthrough"（默认）= 直接把 LLM 的参数 JSON 发给工具
+  //                    "legacy" = 包装成 {"input":..., "context":{...}}（内部工具服务协议）
+  request_body_mode?: 'passthrough' | 'legacy';
 }
 
 export interface DispatchRule {

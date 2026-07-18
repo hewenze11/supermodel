@@ -76,14 +76,23 @@ export async function executeToolCall(
       ...(tool.headers ?? {})
     };
 
-    const body = JSON.stringify({
-      input,
-      context: {
-        tool_id: tool.id,
-        tool_name: tool.name,
-        call_mode: 'ai_tool_call'
-      }
-    });
+    // If the tool has a `request_body_mode: "passthrough"` config (or default),
+    // send the LLM's parsed args directly as the request body.
+    // This allows direct integration with external APIs like Serper, Brave, etc.
+    // Legacy mode: wrap in {"input": ..., "context": {...}} for internal tool servers.
+    const usePassthrough = (tool as any).request_body_mode !== 'legacy';
+    const body = usePassthrough
+      ? JSON.stringify(parsedArgs)
+      : JSON.stringify({
+          input,
+          context: {
+            tool_id: tool.id,
+            tool_name: tool.name,
+            call_mode: 'ai_tool_call'
+          }
+        });
+
+    console.log(`[tool-exec] tool=${tool.id} endpoint=${tool.endpoint} body=${body.slice(0,200)}`);
 
     const resp = await fetch(tool.endpoint, {
       method: 'POST',
@@ -95,18 +104,39 @@ export async function executeToolCall(
     clearTimeout(timer);
 
     if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.log(`[tool-exec] HTTP error ${resp.status}: ${errText.slice(0,200)}`);
       return {
         tool_call_id: toolCall.id,
-        content: `Tool HTTP error: ${resp.status}`,
+        content: `Tool HTTP error: ${resp.status} ${errText.slice(0,100)}`,
         isError: true
       };
     }
 
-    const data = await resp.json() as { output?: string; status?: string; error_message?: string };
+    const data = await resp.json() as any;
+    console.log(`[tool-exec] result keys: ${Object.keys(data).join(',')}`);
+
+    // Handle both internal protocol (output field) and external APIs (organic, results, etc.)
+    let resultContent: string;
+    if (data.output !== undefined) {
+      // Internal protocol
+      resultContent = data.output ?? data.error_message ?? JSON.stringify(data);
+    } else {
+      // External API — stringify the relevant parts
+      // For search APIs: extract organic results
+      if (data.organic) {
+        const snippets = (data.organic as any[]).slice(0, 5).map((r: any) =>
+          `[${r.position}] ${r.title}\n${r.snippet}\n${r.link}`
+        ).join('\n\n');
+        resultContent = snippets || JSON.stringify(data).slice(0, 2000);
+      } else {
+        resultContent = JSON.stringify(data).slice(0, 2000);
+      }
+    }
     const isError = data.status === 'error';
     return {
       tool_call_id: toolCall.id,
-      content: data.output ?? data.error_message ?? JSON.stringify(data),
+      content: resultContent,
       isError
     };
   } catch (err: any) {

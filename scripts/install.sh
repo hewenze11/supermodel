@@ -346,17 +346,27 @@ exec node "$APP_DIR/dist/cli/index.js" "\$@"
 WRAPPER
 chmod +x "$BIN_DIR/supermodel"
 
-# Add to PATH if needed
-if ! echo "$PATH" | grep -q "$BIN_DIR"; then
-  SHELL_RC=""
-  if [ -f "$HOME/.zshrc" ]; then SHELL_RC="$HOME/.zshrc"
-  elif [ -f "$HOME/.bashrc" ]; then SHELL_RC="$HOME/.bashrc"
-  fi
-  if [ -n "$SHELL_RC" ]; then
+# Add to PATH and set admin password env var
+SHELL_RC=""
+if [ -f "$HOME/.zshrc" ]; then SHELL_RC="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then SHELL_RC="$HOME/.bashrc"
+fi
+
+if [ -n "$SHELL_RC" ]; then
+  if ! echo "$PATH" | grep -q "$BIN_DIR"; then
     echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$SHELL_RC"
     echo "  Added $BIN_DIR to PATH in $SHELL_RC"
-    echo "  Run: source $SHELL_RC  (or open a new terminal)"
   fi
+  # Write admin password to shell rc so 'supermodel status/reload/etc' work without extra setup
+  if [ -f "$CONFIG_FILE" ]; then
+    _PASS=$(grep 'admin_password' "$CONFIG_FILE" | sed 's/.*admin_password: *"\?\([^"]*\)"\?.*/\1/')
+    # Remove old entry if present, then append
+    grep -v 'SUPERMODEL_ADMIN_PASSWORD' "$SHELL_RC" > /tmp/_sm_rc_tmp && mv /tmp/_sm_rc_tmp "$SHELL_RC" 2>/dev/null || true
+    echo "export SUPERMODEL_ADMIN_PASSWORD=\"$_PASS\"" >> "$SHELL_RC"
+    export SUPERMODEL_ADMIN_PASSWORD="$_PASS"
+    echo "  Set SUPERMODEL_ADMIN_PASSWORD in $SHELL_RC"
+  fi
+  echo "  Run: source $SHELL_RC  (or open a new terminal)"
 fi
 print_ok "supermodel command installed at $BIN_DIR/supermodel"
 
