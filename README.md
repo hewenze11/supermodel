@@ -226,13 +226,15 @@ endpoint: "https://google.serper.dev/search"
 # API key 通过 Header 传递（以 Serper 为例）
 headers:
   X-API-KEY: "your-serper-api-key-here"
+# 参数名要和 API 期望的字段名一致
+# Serper 期望 {"q": "搜索词"}，所以参数名用 q
 parameters:
   type: object
   properties:
-    query:
+    q:
       type: string
       description: "搜索关键词"
-  required: [query]
+  required: [q]
 ```
 
 配置好工具后，在 flow 节点里加 `tools: [web_search]`，该节点就能自动调用工具：
@@ -252,6 +254,8 @@ nodes:
       If the question involves recent events or facts you're unsure about,
       use the web_search tool to get accurate information first.
 ```
+
+> **注意**：工具参数名（`q`）必须和目标 API 期望的字段名一致。Serper 用 `q`，其他 API 可能用 `query` 或 `keyword`，按实际填写。
 
 ### 全局配置（config.yaml）
 

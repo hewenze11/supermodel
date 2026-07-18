@@ -24,13 +24,18 @@ export function buildOpenAITools(toolConfigs: ToolConfig[]): any[] {
     function: {
       name: t.id,
       description: t.description ?? t.name,
-      parameters: t.input_schema ?? {
+      // Prefer 'parameters' (standard JSON Schema), fall back to 'input_schema' (legacy), then default
+      parameters: t.parameters ?? (t.input_schema ? {
+        type: 'object',
+        properties: t.input_schema,
+        required: Object.keys(t.input_schema)
+      } : {
         type: 'object',
         properties: {
           input: { type: 'string', description: 'The input query or data for this tool' }
         },
         required: ['input']
-      }
+      })
     }
   }));
 }
