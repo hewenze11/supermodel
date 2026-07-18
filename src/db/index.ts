@@ -24,6 +24,18 @@ db.exec(schemaSql);
 
 // Function to initialize the database and perform startup compensation
 export function initDatabase() {
+  // Apply schema migrations: add missing columns if they don't exist
+  const migrations = [
+    "ALTER TABLE node_executions ADD COLUMN error_message TEXT",
+    "ALTER TABLE node_executions ADD COLUMN input_messages_json TEXT",
+    "ALTER TABLE node_executions ADD COLUMN actual_messages_count INTEGER",
+    "ALTER TABLE node_executions ADD COLUMN output_text TEXT",
+    "ALTER TABLE node_executions ADD COLUMN parallel_index INTEGER",
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch { /* column already exists, ignore */ }
+  }
+
   // Perform startup compensation: update any 'running' flow_executions to 'failed'
   const updateRunningFlows = db.prepare(`
     UPDATE flow_executions 
