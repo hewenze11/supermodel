@@ -1,143 +1,230 @@
 # SuperModel
 
-A Node.js single-process service for AI inference with OpenAI-compatible API, featuring flow-based processing and management capabilities.
+> 一个极简的 AI 推理路由引擎，兼容 OpenAI API 协议。
 
-## Features
+## 能做什么
 
-- OpenAI-compatible API for seamless integration
-- Flow-based AI processing with multiple nodes
-- Support for multiple LLM providers (OpenAI, Anthropic)
-- Built-in management and monitoring interface
-- Configuration hot-reload
-- Streaming responses via Server-Sent Events (SSE)
-- SQLite-based persistence for execution tracking
-- Kubernetes-ready deployment
+- 把多个 AI 角色（role）组织成**发言流（flow）**，一次请求走完整个流程
+- 完全兼容 OpenAI API，任何支持 OpenAI 的客户端无需改代码直接接入
+- 支持流式（stream）和非流式两种模式
+- 单进程，轻量，一个安装脚本搞定
 
-## Architecture
+---
 
-SuperModel implements a flow-based processing engine where AI interactions are organized into configurable "flows" consisting of multiple "nodes". Each node represents a step in the AI processing pipeline and can use different models or configurations.
+## 快速安装
 
-### Core Components
-
-1. **Configuration System**: Loads model configurations from `~/.supermodel/models/*/config.yaml`
-2. **Flow Engine**: Executes multi-step AI flows with configurable nodes
-3. **LLM Clients**: Supports OpenAI and Anthropic APIs with unified interface
-4. **Database Layer**: SQLite-based persistence for tracking executions
-5. **API Layer**: OpenAI-compatible inference API and management endpoints
-
-### Ports
-
-- **11451**: Inference API (OpenAI-compatible)
-- **11435**: Management API and UI (bound to 127.0.0.1)
-
-## Installation
+**Linux / macOS**（需要 Node.js 20+、git）：
 
 ```bash
-npm install
-npm run build
+curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/install.sh | bash
 ```
 
-## Usage
+安装完成后会输出：
+- Admin 密码（保存好，后续管理用）
+- 配置文件路径：`~/.supermodel/config.yaml`
 
-### Starting the Server
+---
+
+## 启动 / 停止
 
 ```bash
-npm start
-# or
-node dist/index.js
+supermodel start    # 启动服务（后台运行）
+supermodel stop     # 停止服务
+supermodel status   # 查看运行状态
+supermodel reload   # 热重载配置（不停服）
 ```
 
-### CLI Commands
+服务启动后：
+- **推理接口**：`http://localhost:11451`（对外）
+- **管理接口**：`http://localhost:11435`（仅本机）
+
+---
+
+## 配置你的第一个实例
+
+### 1. 创建实例目录
 
 ```bash
-# Start the server
-npx supermodel start
-
-# Check server status
-npx supermodel status
-
-# Reload configurations
-npx supermodel reload
-
-# Stop the server
-npx supermodel stop
-
-# List flows
-npx supermodel flows list
-
-# Get flow details
-npx supermodel flows get <flow-name>
+mkdir -p ~/.supermodel/models/my-instance/roles
+mkdir -p ~/.supermodel/models/my-instance/flows
 ```
 
-### Configuration
+### 2. 配置角色（role）
 
-Create your model configuration in `~/.supermodel/models/<model-name>/config.yaml`:
+`~/.supermodel/models/my-instance/roles/role_1.yaml`
 
 ```yaml
-instance_name: my-instance
-primary: true
-roles:
-  - id: gpt-4
-    provider_type: openai
-    model: gpt-4
-    api_key: sk-your-openai-api-key
-    base_url: https://api.openai.com/v1
-  - id: claude-3
-    provider_type: anthropic
-    model: claude-3-opus-20240229
-    api_key: your-anthropic-api-key
-    base_url: https://api.anthropic.com/v1
-flows:
-  - name: content-review
-    nodes:
-      - id: writer
-        role_id: gpt-4
-        system_prompt: "You are a creative content writer..."
-        max_rounds: 1
-      - id: reviewer
-        role_id: claude-3
-        system_prompt: "You are a meticulous content reviewer..."
-        max_rounds: 1
-dispatch:
-  - flow_name: content-review
-    instance_name: my-instance
-    priority: 1
+id: role_1
+primary: true                          # 主力角色，有且只有一个
+provider_model: gpt-4o-mini            # 上游模型名称
+api_key: sk-xxxxx                      # 你的 API Key
+base_url: https://api.openai.com/v1    # 任何 OpenAI 兼容接口均可
+provider_type: openai                  # openai 或 anthropic
+context_window: 32000                  # token 上限
+system_token_budget: 2000              # 系统提示词预留 token
 ```
 
-## API Endpoints
+### 3. 配置发言流（flow）
 
-### Inference API
+`~/.supermodel/models/my-instance/flows/direct.yaml`
 
-- `POST /v1/chat/completions` - OpenAI-compatible chat completions
-- `GET /v1/models` - List available models
+```yaml
+id: direct
+output_node: node_1
+nodes:
+  - id: node_1
+    type: serial
+    role_id: role_1
+    prompt: "You are a helpful assistant. Answer clearly and concisely."
+```
 
-### Management API
-
-- `GET /admin/status` - Server health status
-- `POST /admin/reload` - Reload configurations
-- `POST /admin/shutdown` - Shutdown server
-- `POST /admin/test` - Test configuration
-- `GET /admin/flows` - List all flows
-- `GET /admin/flows/:id` - Get flow details
-- `GET /admin/executions/:id` - Get execution details
-- `POST /admin/executions/:id/cancel` - Cancel execution
-
-## Development
+### 4. 重载配置
 
 ```bash
-# Build TypeScript
-npm run build
-
-# Run in development mode
-npm run dev
-
-# Run tests
-npm test
+supermodel reload
 ```
 
-## Deployment
+### 5. 验证
 
-SuperModel includes Kubernetes manifests for both development and production environments in the `k8s/` directory. The service is designed to work with Harbor container registry and includes automated CI/CD workflows.
+```bash
+# 查看可用模型
+curl http://localhost:11451/v1/models \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# 发一条消息
+curl http://localhost:11451/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"my-instance/direct","messages":[{"role":"user","content":"hello"}]}'
+```
+
+---
+
+## 全局配置
+
+`~/.supermodel/config.yaml`
+
+```yaml
+port: 11451                  # 推理接口端口
+admin_port: 11435            # 管理接口端口
+admin_bind: "127.0.0.1"      # 管理接口只绑本机（安全）
+admin_password: "xxx"        # 管理员密码（安装时自动生成）
+api_keys:                    # 推理接口的 API Key 列表
+  - "your-inference-key"
+log_level: info
+flow_timeout_seconds: 300    # 单次请求超时（秒）
+max_concurrent_flows: 10     # 最大并发数
+debug_full_payload: false    # 开启后落库完整请求，调试用
+```
+
+修改后执行 `supermodel reload` 生效。
+
+---
+
+## API 说明
+
+完全兼容 OpenAI Chat Completions 协议。
+
+### 鉴权
+
+所有请求需要带 `Authorization: Bearer YOUR_API_KEY`（key 在 config.yaml 的 `api_keys` 里配置）。
+
+### 模型名格式
+
+```
+{实例名}/{发言流名}
+```
+
+例如：`my-instance/direct`、`my-instance/review`
+
+### 接口列表
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/v1/models` | 列出所有可用模型 |
+| POST | `/v1/chat/completions` | 发起推理（支持 stream） |
+
+### 响应扩展字段
+
+非流式响应会额外返回 `x_supermodel_usage`，包含每个 role 的 token 用量：
+
+```json
+{
+  "x_supermodel_usage": {
+    "role_1": {
+      "prompt_tokens": 38,
+      "completion_tokens": 5
+    }
+  }
+}
+```
+
+---
+
+## 发言流节点类型
+
+### serial（串行节点）
+
+一个 role 依次执行，结果传给下一个节点。
+
+```yaml
+- id: node_1
+  type: serial
+  role_id: role_1
+  prompt: "你的任务提示词"
+```
+
+### parallel（并行节点）
+
+多个 role 同时执行，结果合并后传给下一个节点。
+
+```yaml
+- id: node_review
+  type: parallel
+  roles:
+    - role_2
+    - role_3
+  prompt: "请对上面的内容提出审查意见"
+  next: node_judge
+```
+
+### tool（工具节点）
+
+调用外部 HTTP 接口。
+
+```yaml
+- id: node_search
+  type: tool
+  tool_ref: web_search
+  next: node_1
+```
+
+---
+
+## 目录结构
+
+```
+~/.supermodel/
+├── config.yaml              # 全局配置
+├── data.db                  # SQLite 数据库（执行记录）
+├── server.log               # 服务日志
+└── models/
+    └── my-instance/
+        ├── roles/
+        │   └── role_1.yaml
+        └── flows/
+            └── direct.yaml
+```
+
+---
+
+## 环境要求
+
+- Node.js 20+
+- git
+- Linux / macOS（Windows 暂不支持安装脚本，可手动 clone + npm install + npm run build）
+
+---
 
 ## License
 
