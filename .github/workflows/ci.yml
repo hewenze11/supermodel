@@ -80,12 +80,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          REPO_PATH="${IMAGE_NAME}/${IMAGE_NAME}"
           for tag in "dev-${SHORT_SHA}" "dev-latest"; do
-            echo "Checking manifest: ${REGISTRY}/${IMAGE_NAME}:${tag}"
+            echo "Checking manifest: ${REGISTRY}/${REPO_PATH}:${tag}"
             code=$(curl -sS -o /dev/null -w "%{http_code}" \
               -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
               -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-              "http://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${tag}")
+              "http://${REGISTRY}/v2/${REPO_PATH}/manifests/${tag}")
             if [ "$code" != "200" ]; then
               echo "Manifest check FAILED for ${tag}, HTTP ${code}"
               exit 1
