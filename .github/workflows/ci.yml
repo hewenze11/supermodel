@@ -83,15 +83,22 @@ jobs:
           REPO_PATH="${IMAGE_NAME}/${IMAGE_NAME}"
           for tag in "dev-${SHORT_SHA}" "dev-latest"; do
             echo "Checking manifest: ${REGISTRY}/${REPO_PATH}:${tag}"
-            code=$(curl -sS -o /dev/null -w "%{http_code}" \
-              -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
-              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-              "http://${REGISTRY}/v2/${REPO_PATH}/manifests/${tag}")
-            if [ "$code" != "200" ]; then
-              echo "Manifest check FAILED for ${tag}, HTTP ${code}"
-              exit 1
-            fi
-            echo "Manifest OK: ${tag} (HTTP ${code})"
+            for i in 1 2 3; do
+              code=$(curl -sS -o /dev/null -w "%{http_code}" \
+                -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
+                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                "http://${REGISTRY}/v2/${REPO_PATH}/manifests/${tag}")
+              if [ "$code" = "200" ]; then
+                echo "Manifest OK: ${tag} (HTTP ${code})"
+                break
+              fi
+              echo "Attempt $i: HTTP ${code}, retrying in 3s..."
+              sleep 3
+              if [ $i -eq 3 ]; then
+                echo "Manifest check FAILED for ${tag} after 3 attempts, HTTP ${code}"
+                exit 1
+              fi
+            done
           done
 
       - name: Update k8s/dev/deployment.yaml and push
