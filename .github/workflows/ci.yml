@@ -4,93 +4,129 @@ on:
   push:
     branches: [ dev, main ]
 
+permissions:
+  contents: write
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+
+    env:
+      REGISTRY: 172.236.254.239:30880
+      IMAGE_NAME: supermodel
+      FEISHU_WEBHOOK: https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099
+
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Create BuildKit config for insecure Harbor registry
-      run: |
-        mkdir -p /tmp/buildkit
-        printf '[registry."172.236.254.239:30880"]\n  http = true\n  insecure = true\n' > /tmp/buildkit/buildkitd.toml
-        cat /tmp/buildkit/buildkitd.toml
+      - name: Extract branch name
+        shell: bash
+        run: echo "BRANCH_NAME=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-      with:
-        config: /tmp/buildkit/buildkitd.toml
+      - name: Get short SHA
+        shell: bash
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-    - name: Login to Harbor
-      uses: docker/login-action@v3
-      with:
-        registry: 172.236.254.239:30880
-        username: ${{ secrets.HARBOR_USERNAME }}
-        password: ${{ secrets.HARBOR_PASSWORD }}
-        
-    - name: Extract branch name
-      shell: bash
-      run: echo "BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/})" >> $GITHUB_ENV
-      
-    - name: Get short SHA
-      run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-      
-    - name: Build and push dev
-      if: env.BRANCH_NAME == 'dev'
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        tags: |
-          172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}
-          172.236.254.239:30880/supermodel:dev-latest
-        build-args: |
-          NODE_ENV=development
-          
-    - name: Build and push prod
-      if: env.BRANCH_NAME == 'main'
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        tags: |
-          172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}
-          172.236.254.239:30880/supermodel:prod-latest
-        build-args: |
-          NODE_ENV=production
-          
-    - name: Update Kubernetes manifests for dev
-      if: env.BRANCH_NAME == 'dev'
-      run: |
-        sed -i "s|172.236.254.239:30880/supermodel:dev-[a-z0-9]*|172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}|g" k8s/dev/deployment.yaml
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add k8s/dev/deployment.yaml
-        git commit -m "Update dev deployment image tag [skip ci]" || exit 0
-        git push origin dev || exit 0
-        
-    - name: Update Kubernetes manifests for prod
-      if: env.BRANCH_NAME == 'main'
-      run: |
-        sed -i "s|172.236.254.239:30880/supermodel:prod-[a-z0-9]*|172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}|g" k8s/prod/deployment.yaml
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add k8s/prod/deployment.yaml
-        git commit -m "Update prod deployment image tag [skip ci]" || exit 0
-        git push origin main || exit 0
+      - name: Create BuildKit config for insecure HTTP Harbor
+        shell: bash
+        run: |
+          mkdir -p /tmp/buildkit
+          printf '[registry."172.236.254.239:30880"]\n  http = true\n  insecure = true\n' > /tmp/buildkit/buildkitd.toml
+          echo "=== buildkitd.toml ===" && cat /tmp/buildkit/buildkitd.toml
 
-    - name: Notify Feishu on success
-      if: success()
-      run: |
-        curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099 \
-        -H 'Content-Type: application/json' \
-        -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"✅ [SuperModel CI/CD] 构建成功\\n分支: ${{ env.BRANCH_NAME }}\\nCommit: ${{ env.SHORT_SHA }}\"}}"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          buildkitd-config: /tmp/buildkit/buildkitd.toml
 
-    - name: Notify Feishu on failure
-      if: failure()
-      run: |
-        curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099 \
-        -H 'Content-Type: application/json' \
-        -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ [SuperModel CI/CD] 构建失败\\n分支: ${{ env.BRANCH_NAME }}\\nCommit: ${{ env.SHORT_SHA }}\\n请检查 Actions 日志\"}}"
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: 172.236.254.239:30880
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Build and push dev
+        if: env.BRANCH_NAME == 'dev'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}
+            172.236.254.239:30880/supermodel:dev-latest
+          build-args: |
+            NODE_ENV=development
+
+      - name: Verify dev image pushed to Harbor
+        if: env.BRANCH_NAME == 'dev'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tag in "dev-${SHORT_SHA}" "dev-latest"; do
+            echo "Checking manifest: ${REGISTRY}/${IMAGE_NAME}:${tag}"
+            code=$(curl -sS -o /dev/null -w "%{http_code}" \
+              -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              "http://${REGISTRY}/v2/${IMAGE_NAME}/manifests/${tag}")
+            if [ "$code" != "200" ]; then
+              echo "Manifest check FAILED for ${tag}, HTTP ${code}"
+              exit 1
+            fi
+            echo "Manifest OK: ${tag} (HTTP ${code})"
+          done
+
+      - name: Update k8s/dev/deployment.yaml and push
+        if: env.BRANCH_NAME == 'dev'
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="k8s/dev/deployment.yaml"
+          IMG="${REGISTRY}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+          sed -i -E "s#image:\s*${REGISTRY}/${IMAGE_NAME}:[^[:space:]]+#image: ${IMG}#g" "$FILE"
+          git diff -- "$FILE" || true
+          if git diff --quiet -- "$FILE"; then
+            echo "No changes, skip commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
+          git push origin HEAD:dev
+
+      - name: Build and push prod
+        if: env.BRANCH_NAME == 'main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}
+            172.236.254.239:30880/supermodel:prod-latest
+          build-args: |
+            NODE_ENV=production
+
+      - name: Notify Feishu on success
+        if: success()
+        shell: bash
+        run: |
+          curl -sS -X POST "${FEISHU_WEBHOOK}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"✅ [SuperModel CI/CD] 构建成功\\n分支: ${BRANCH_NAME}\\nCommit: ${SHORT_SHA}\"}}"
+
+      - name: Notify Feishu on failure
+        if: failure()
+        shell: bash
+        run: |
+          curl -sS -X POST "${FEISHU_WEBHOOK}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ [SuperModel CI/CD] 构建失败\\n分支: ${BRANCH_NAME}\\nCommit: ${SHORT_SHA}\\nRun: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}}"
