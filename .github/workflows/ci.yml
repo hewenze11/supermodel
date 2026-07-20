@@ -70,8 +70,8 @@ jobs:
           push: true
           provenance: false
           tags: |
-            172.236.254.239:30880/supermodel:dev-${{ env.SHORT_SHA }}
-            172.236.254.239:30880/supermodel:dev-latest
+            172.236.254.239:30880/supermodel/supermodel:dev-${{ env.SHORT_SHA }}
+            172.236.254.239:30880/supermodel/supermodel:dev-latest
           build-args: |
             NODE_ENV=development
 
@@ -121,8 +121,8 @@ jobs:
           push: true
           provenance: false
           tags: |
-            172.236.254.239:30880/supermodel:prod-${{ env.SHORT_SHA }}
-            172.236.254.239:30880/supermodel:prod-latest
+            172.236.254.239:30880/supermodel/supermodel:prod-${{ env.SHORT_SHA }}
+            172.236.254.239:30880/supermodel/supermodel:prod-latest
           build-args: |
             NODE_ENV=production
 
