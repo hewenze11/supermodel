@@ -3,6 +3,7 @@ import staticPlugin from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
 import { initDatabase } from './db';
+import { connectRedis } from './redis';
 import { ConfigLoader } from './config/loader';
 import { ConfigRegistry } from './config/types';
 import { FlowEngine } from './engine/flow';
@@ -24,6 +25,9 @@ class SuperModelServer {
     
     // Initialize database (PostgreSQL, creates tables + startup compensation)
     await initDatabase();
+
+    // Connect Redis (pub/sub for cross-replica execution cancellation)
+    await connectRedis();
     
     // Load configurations
     this.configRegistry = await ConfigLoader.getInstance().loadConfigs();

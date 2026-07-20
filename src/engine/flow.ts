@@ -3,6 +3,7 @@ import { promises as dns } from 'dns';
 import { MessageList } from './message-list';
 import { LLMClient, ChatCompletionRequest, StreamChunk } from '../llm/client';
 import { buildOpenAITools, executeToolCall, ToolCall } from './tool-runner';
+import { publishCancel, subscribeCancel } from '../redis';
 import { db } from '../db';
 import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfig, ToolNodeConfig, ToolConfig } from '../config/types';
 
@@ -143,6 +144,8 @@ export class FlowEngine {
   // Cancel a running execution
   cancelExecution(executionId: string): boolean {
     const ctrl = this.activeExecutions.get(executionId);
+    // Publish to Redis so other replicas can also abort (cross-replica cancel)
+    publishCancel(executionId); // fire-and-forget, non-fatal if Redis is down
     if (!ctrl) return false;
     ctrl.abort();
     // Eagerly remove so the slot is freed immediately
@@ -187,6 +190,14 @@ export class FlowEngine {
     const executionId = uuidv4();
     const abort = abortController ?? new AbortController();
     this.activeExecutions.set(executionId, abort);
+
+    // Subscribe to Redis cancel channel so other replicas can abort this execution
+    const unsubscribeCancel = subscribeCancel(executionId, () => {
+      if (!abort.signal.aborted) {
+        abort.abort();
+        this.activeExecutions.delete(executionId);
+      }
+    });
 
     const messageList = new MessageList();
     messageList.addMessage({ role: 'user', content: initialInput });
@@ -668,6 +679,7 @@ export class FlowEngine {
     } finally {
       clearTimeout(flowTimer);
       this.activeExecutions.delete(executionId);
+      unsubscribeCancel();
     }
   }
 }

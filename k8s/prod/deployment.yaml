@@ -27,6 +27,8 @@ spec:
           value: "production"
         - name: DATABASE_URL
           value: "postgresql://postgres:PgProd12345@172.236.224.19:5432/supermodel_prod"
+        - name: REDIS_URL
+          value: "redis://:RedisProd12345@172.236.224.19:6379"
         volumeMounts:
         - name: supermodel-config
           mountPath: /root/.supermodel
