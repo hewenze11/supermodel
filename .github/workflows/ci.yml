@@ -83,14 +83,16 @@ jobs:
         git commit -m "Update prod deployment image tag [skip ci]" || exit 0
         git push origin main || exit 0
 
-    - name: Notify Feishu
+    - name: Notify Feishu on success
+      if: success()
       run: |
         curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099 \
         -H 'Content-Type: application/json' \
-        -d "{
-          \"msg_type\": \"text\",
-          \"content\": {
-            \"text\": \"[CI/CD] SuperModel build completed - Branch: ${{ env.BRANCH_NAME }}, Commit: ${{ env.SHORT_SHA }}, Status: Success\"
-          }
-        }"
-      if: always()
+        -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"✅ [SuperModel CI/CD] 构建成功\\n分支: ${{ env.BRANCH_NAME }}\\nCommit: ${{ env.SHORT_SHA }}\"}}"
+
+    - name: Notify Feishu on failure
+      if: failure()
+      run: |
+        curl -X POST https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099 \
+        -H 'Content-Type: application/json' \
+        -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ [SuperModel CI/CD] 构建失败\\n分支: ${{ env.BRANCH_NAME }}\\nCommit: ${{ env.SHORT_SHA }}\\n请检查 Actions 日志\"}}"
