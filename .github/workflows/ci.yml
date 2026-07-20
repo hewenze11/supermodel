@@ -48,20 +48,13 @@ jobs:
         run: |
           mkdir -p ~/.docker
           AUTH=$(echo -n "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" | base64 -w 0)
-          cat > ~/.docker/config.json << EOF
-          {
-            "auths": {
-              "172.236.254.239:30880": {
-                "auth": "${AUTH}"
-              }
-            }
-          }
-          EOF
+          printf '{"auths":{"172.236.254.239:30880":{"auth":"%s"}}}\n' "${AUTH}" > ~/.docker/config.json
           echo "Docker config written."
           curl -sf -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
             "http://172.236.254.239:30880/v2/" && echo "Harbor reachable OK" || echo "Harbor unreachable"
 
       - name: Build and push dev
+        id: build_dev
         if: env.BRANCH_NAME == 'dev'
         uses: docker/build-push-action@v5
         with:
@@ -75,52 +68,8 @@ jobs:
           build-args: |
             NODE_ENV=development
 
-      - name: Verify dev image pushed to Harbor
-        if: env.BRANCH_NAME == 'dev'
-        shell: bash
-        run: |
-          set -euo pipefail
-          REPO_PATH="${IMAGE_NAME}/${IMAGE_NAME}"
-          for tag in "dev-${SHORT_SHA}" "dev-latest"; do
-            echo "Checking manifest: ${REGISTRY}/${REPO_PATH}:${tag}"
-            for i in 1 2 3; do
-              code=$(curl -sS -o /dev/null -w "%{http_code}" \
-                -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
-                -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                "http://${REGISTRY}/v2/${REPO_PATH}/manifests/${tag}")
-              if [ "$code" = "200" ]; then
-                echo "Manifest OK: ${tag} (HTTP ${code})"
-                break
-              fi
-              echo "Attempt $i: HTTP ${code}, retrying in 3s..."
-              sleep 3
-              if [ $i -eq 3 ]; then
-                echo "Manifest check FAILED for ${tag} after 3 attempts, HTTP ${code}"
-                exit 1
-              fi
-            done
-          done
-
-      - name: Update k8s/dev/deployment.yaml and push
-        if: env.BRANCH_NAME == 'dev'
-        shell: bash
-        run: |
-          set -euo pipefail
-          FILE="k8s/dev/deployment.yaml"
-          IMG="${REGISTRY}/${IMAGE_NAME}:dev-${SHORT_SHA}"
-          sed -i -E "s#image:\s*${REGISTRY}/${IMAGE_NAME}:[^[:space:]]+#image: ${IMG}#g" "$FILE"
-          git diff -- "$FILE" || true
-          if git diff --quiet -- "$FILE"; then
-            echo "No changes, skip commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$FILE"
-          git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
-          git push origin HEAD:dev
-
       - name: Build and push prod
+        id: build_prod
         if: env.BRANCH_NAME == 'main'
         uses: docker/build-push-action@v5
         with:
@@ -134,8 +83,27 @@ jobs:
           build-args: |
             NODE_ENV=production
 
+      - name: Update k8s/dev/deployment.yaml and push
+        if: env.BRANCH_NAME == 'dev' && steps.build_dev.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="k8s/dev/deployment.yaml"
+          NEW_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+          sed -i -E "s#image:.*${IMAGE_NAME}.*:dev-[a-z0-9]+#image: ${NEW_IMG}#g" "$FILE"
+          git diff -- "$FILE" || true
+          if git diff --quiet -- "$FILE"; then
+            echo "No changes, skip commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
+          git push origin HEAD:dev
+
       - name: Notify Feishu on success
-        if: success()
+        if: (env.BRANCH_NAME == 'dev' && steps.build_dev.outcome == 'success') || (env.BRANCH_NAME == 'main' && steps.build_prod.outcome == 'success')
         shell: bash
         run: |
           curl -sS -X POST "${FEISHU_WEBHOOK}" \
