@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { ConfigRegistry, FlowConfig, RoleConfig } from '../config/types';
 import { FlowEngine } from '../engine/flow';
 import { SSEWriter } from '../sse/writer';
@@ -71,6 +72,31 @@ function resolveModel(model: string, registry: ConfigRegistry): {
 
 export async function inferenceRoutes(fastify: FastifyInstance, options: InferenceRoutesOptions) {
   const { configRegistry, flowEngine, apiKeys } = options;
+
+  // ── Rate limiting ────────────────────────────────────────────────────────
+  // Limit per API key (keyGenerator extracts Bearer token).
+  // RATE_LIMIT_MAX: max requests per window (default 60/min).
+  // RATE_LIMIT_WINDOW_MS: window in ms (default 60000 = 1 min).
+  const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX || '60', 10);
+  const rateLimitWindowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10);
+
+  await fastify.register(rateLimit, {
+    max: rateLimitMax,
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: (req: any) => {
+      // Rate-limit per API key, fall back to IP
+      const auth = req.headers['authorization'] as string | undefined;
+      if (auth?.startsWith('Bearer ')) return auth.slice(7);
+      return req.ip;
+    },
+    addHeaders: {
+      'x-ratelimit-limit': true,
+      'x-ratelimit-remaining': true,
+      'x-ratelimit-reset': true,
+      'retry-after': true,
+    },
+  });
+  // ── End rate limiting ────────────────────────────────────────────────────
 
   fastify.addHook('preHandler', async (req: any, reply: any) => {
     if (!authenticateInference(req, reply, apiKeys)) {
