@@ -297,7 +297,11 @@ export class FlowEngine {
           let nodePrompt = 0;
           let nodeCompletion = 0;
 
-          const nodeTimeoutMs = 60_000;
+          // NODE_TIMEOUT_MS: per-node LLM call timeout (default 60s, max 600s)
+          const nodeTimeoutMs = Math.min(
+            parseInt(process.env.NODE_TIMEOUT_MS || '60000', 10),
+            600_000
+          );
           const nodeAbort = new AbortController();
           const nodeTimer = setTimeout(() => nodeAbort.abort(), nodeTimeoutMs);
           // Combine flow abort + node timeout, with polyfill for older Node
