@@ -4,7 +4,7 @@ metadata:
   name: supermodel-prod
   namespace: supermodel
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: supermodel-prod
@@ -16,17 +16,20 @@ spec:
       containers:
       - name: supermodel
         image: 172.236.254.239:30880/supermodel:prod-latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 11451
+          name: inference
         - containerPort: 11435
+          name: admin
         env:
         - name: NODE_ENV
           value: "production"
+        - name: DATABASE_URL
+          value: "postgresql://postgres:PgProd12345@172.236.224.19:5432/supermodel_prod"
         volumeMounts:
         - name: supermodel-config
           mountPath: /root/.supermodel
-        - name: supermodel-data
-          mountPath: /app/data
         resources:
           requests:
             memory: "512Mi"
@@ -36,24 +39,22 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /admin/status
-            port: 11435
-          initialDelaySeconds: 30
-          periodSeconds: 10
+            path: /health
+            port: 11451
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /admin/status
-            port: 11435
-          initialDelaySeconds: 5
-          periodSeconds: 5
+            path: /health
+            port: 11451
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          failureThreshold: 3
       volumes:
       - name: supermodel-config
         hostPath:
           path: /root/.supermodel
-          type: DirectoryOrCreate
-      - name: supermodel-data
-        hostPath:
-          path: /app/data
           type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -74,3 +75,19 @@ spec:
       targetPort: 11435
       name: admin
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supermodel-nodeport-prod
+  namespace: supermodel
+spec:
+  selector:
+    app: supermodel-prod
+  ports:
+    - protocol: TCP
+      port: 11451
+      targetPort: 11451
+      nodePort: 31004
+      name: inference
+  type: NodePort

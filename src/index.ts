@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import staticPlugin from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
-import { initDatabase, db } from './db';
+import { initDatabase } from './db';
 import { ConfigLoader } from './config/loader';
 import { ConfigRegistry } from './config/types';
 import { FlowEngine } from './engine/flow';
@@ -22,11 +22,8 @@ class SuperModelServer {
   async start() {
     console.log('Initializing SuperModel server...');
     
-    // Initialize database
-    initDatabase();
-    
-    // Perform startup compensation: update any 'running' executions to 'failed'
-    this.performStartupCompensation();
+    // Initialize database (PostgreSQL, creates tables + startup compensation)
+    await initDatabase();
     
     // Load configurations
     this.configRegistry = await ConfigLoader.getInstance().loadConfigs();
@@ -41,6 +38,11 @@ class SuperModelServer {
     // Create inference server (public API)
     this.inferenceServer = Fastify({
       logger: true,
+    });
+
+    // Health check endpoint (for K8s liveness/readiness probes)
+    this.inferenceServer.get('/health', async () => {
+      return { status: 'ok' };
     });
     
     // Create admin server (private, bound to localhost)
@@ -92,10 +94,10 @@ class SuperModelServer {
         host: '0.0.0.0'
       });
       
-      // Start admin server only on localhost
+      // Start admin server on all interfaces (K8s exposes via Service)
       await this.adminServer.listen({
         port: ADMIN_PORT,
-        host: '127.0.0.1'
+        host: '0.0.0.0'
       });
       
       console.log(`Inference server running on port ${INFERENCE_PORT}`);
@@ -105,28 +107,6 @@ class SuperModelServer {
       console.error('Error starting server:', err);
       process.exit(1);
     }
-  }
-
-  performStartupCompensation() {
-    console.log('Performing startup compensation...');
-    
-    // Update flow_executions with running status to failed (no error_message column)
-    const updateFlowStmt = db.prepare(`
-      UPDATE flow_executions 
-      SET status = 'failed', finished_at = ?, finish_reason = 'process_restarted'
-      WHERE status = 'running'
-    `);
-    const flowResult = updateFlowStmt.run(Date.now());
-    
-    // Update node_executions with running status to failed
-    const updateNodeStmt = db.prepare(`
-      UPDATE node_executions 
-      SET status = 'failed', finished_at = ?, error_message = 'Process restarted unexpectedly'
-      WHERE status = 'running'
-    `);
-    const nodeResult = updateNodeStmt.run(Date.now());
-    
-    console.log(`Compensated ${flowResult.changes} flow executions and ${nodeResult.changes} node executions`);
   }
   
   async stop() {

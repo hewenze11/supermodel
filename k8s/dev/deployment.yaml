@@ -4,7 +4,7 @@ metadata:
   name: supermodel-dev
   namespace: dev-supermodel
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: supermodel-dev
@@ -16,25 +16,38 @@ spec:
       containers:
       - name: supermodel
         image: 172.236.254.239:30880/supermodel:dev-latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 11451
+          name: inference
         - containerPort: 11435
+          name: admin
         env:
         - name: NODE_ENV
           value: "development"
+        - name: DATABASE_URL
+          value: "postgresql://postgres:PgTest12345@172.236.224.19:5433/supermodel_test"
         volumeMounts:
         - name: supermodel-config
           mountPath: /root/.supermodel
-        - name: supermodel-data
-          mountPath: /app/data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 11451
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 11451
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          failureThreshold: 3
       volumes:
       - name: supermodel-config
         hostPath:
           path: /root/.supermodel
-          type: DirectoryOrCreate
-      - name: supermodel-data
-        hostPath:
-          path: /app/data
           type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -55,3 +68,19 @@ spec:
       targetPort: 11435
       name: admin
   type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supermodel-nodeport-dev
+  namespace: dev-supermodel
+spec:
+  selector:
+    app: supermodel-dev
+  ports:
+    - protocol: TCP
+      port: 11451
+      targetPort: 11451
+      nodePort: 31004
+      name: inference
+  type: NodePort

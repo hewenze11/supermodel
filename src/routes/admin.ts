@@ -224,12 +224,14 @@ export async function adminRoutes(fastify: FastifyInstance, options: AdminRoutes
     const pageSize = Math.min(100, Math.max(1, parseInt((req.query as any).page_size ?? '20')));
     const offset = (page - 1) * pageSize;
 
-    const total = (db.prepare('SELECT COUNT(*) as c FROM flow_executions').get() as any)?.c ?? 0;
-    const executions = db.prepare(`
+    const totalResult = await db.query('SELECT COUNT(*) as c FROM flow_executions');
+    const total = parseInt(totalResult.rows[0]?.c ?? '0', 10);
+    const execResult = await db.query(`
       SELECT id, instance_name, flow_name, status, total_rounds as rounds, finish_reason,
              created_at, started_at, finished_at
-      FROM flow_executions ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(pageSize, offset);
+      FROM flow_executions ORDER BY created_at DESC LIMIT $1 OFFSET $2
+    `, [pageSize, offset]);
+    const executions = execResult.rows;
 
     return { executions, total, page, page_size: pageSize };
   });
@@ -239,19 +241,21 @@ export async function adminRoutes(fastify: FastifyInstance, options: AdminRoutes
   fastify.get('/admin/flows/:id', async (req: any, reply) => {
     const { id } = req.params as { id: string };
 
-    const execution = db.prepare(`
+    const execRow = await db.query(`
       SELECT id, instance_name, flow_name, status,
              total_rounds as rounds, finish_reason,
              created_at, started_at, finished_at
-      FROM flow_executions WHERE id = ?
-    `).get(id) as any;
+      FROM flow_executions WHERE id = $1
+    `, [id]);
+    const execution = execRow.rows[0] as any;
     if (!execution) return reply.status(404).send({ error: { message: 'Not found', type: 'not_found' } });
 
-    const node_executions = db.prepare(`
+    const nodeResult = await db.query(`
       SELECT id, node_id, role_id, status, started_at, finished_at, round,
              prompt_tokens, completion_tokens, output_text, error_message, parallel_index
-      FROM node_executions WHERE flow_execution_id = ? ORDER BY started_at ASC
-    `).all(id);
+      FROM node_executions WHERE flow_execution_id = $1 ORDER BY started_at ASC
+    `, [id]);
+    const node_executions = nodeResult.rows;
 
     return { execution, node_executions };
   });

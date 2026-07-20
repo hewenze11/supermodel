@@ -125,16 +125,15 @@ export interface FlowExecutionResult {
   byRoleUsage: Record<string, { prompt_tokens: number; completion_tokens: number }>;
 }
 
-const SQL_INSERT_FLOW = 'INSERT INTO flow_executions (id, instance_name, flow_name, status, started_at, total_rounds) VALUES (?,?,?,?,?,?)';
-const SQL_UPDATE_FLOW_TIMEOUT = 'UPDATE flow_executions SET status=\'timeout\', finish_reason=\'global_timeout\', finished_at=? WHERE id=? AND status=\'running\'';
-const SQL_UPDATE_FLOW_FAILED = 'UPDATE flow_executions SET status=\'failed\', finish_reason=?, finished_at=?, total_rounds=? WHERE id=? AND status=\'running\'';
-const SQL_UPDATE_FLOW_DONE = 'UPDATE flow_executions SET status=?, finish_reason=?, finished_at=?, total_rounds=? WHERE id=? AND status=\'running\'';
-const SQL_UPDATE_FLOW_ABORTED = 'UPDATE flow_executions SET status=\'aborted\', finished_at=?, finish_reason=\'cancelled_by_user\' WHERE id=?';
-const SQL_INSERT_NODE = 'INSERT INTO node_executions (id, flow_execution_id, node_id, role_id, round, status, started_at, input_messages_json) VALUES (?,?,?,?,?,?,?,?)';
-const SQL_INSERT_NODE_PARALLEL = 'INSERT INTO node_executions (id, flow_execution_id, node_id, role_id, round, parallel_index, status, started_at, input_messages_json) VALUES (?,?,?,?,?,?,?,?,?)';
-const SQL_UPDATE_NODE_SUCCESS = 'UPDATE node_executions SET status=\'success\', finished_at=?, output_text=?, prompt_tokens=?, completion_tokens=? WHERE id=?';
-const SQL_UPDATE_NODE_FAILED = 'UPDATE node_executions SET status=?, finished_at=?, error_message=? WHERE id=?';
-const SQL_INSERT_USAGE = 'INSERT INTO usage_records (flow_execution_id, node_execution_id, role_id, provider_model, prompt_tokens, completion_tokens) VALUES (?,?,?,?,?,?)';
+const SQL_INSERT_FLOW = 'INSERT INTO flow_executions (id, instance_name, flow_name, status, started_at, total_rounds) VALUES ($1,$2,$3,$4,$5,$6)';
+const SQL_UPDATE_FLOW_FAILED = 'UPDATE flow_executions SET status=\'failed\', finish_reason=$1, finished_at=$2, total_rounds=$3 WHERE id=$4 AND status=\'running\'';
+const SQL_UPDATE_FLOW_DONE = 'UPDATE flow_executions SET status=$1, finish_reason=$2, finished_at=$3, total_rounds=$4 WHERE id=$5 AND status=\'running\'';
+const SQL_UPDATE_FLOW_ABORTED = 'UPDATE flow_executions SET status=\'aborted\', finished_at=$1, finish_reason=\'cancelled_by_user\' WHERE id=$2';
+const SQL_INSERT_NODE = 'INSERT INTO node_executions (id, flow_execution_id, node_id, role_id, round, status, started_at, input_messages_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)';
+const SQL_INSERT_NODE_PARALLEL = 'INSERT INTO node_executions (id, flow_execution_id, node_id, role_id, round, parallel_index, status, started_at, input_messages_json) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)';
+const SQL_UPDATE_NODE_SUCCESS = 'UPDATE node_executions SET status=\'success\', finished_at=$1, output_text=$2, prompt_tokens=$3, completion_tokens=$4 WHERE id=$5';
+const SQL_UPDATE_NODE_FAILED = 'UPDATE node_executions SET status=$1, finished_at=$2, error_message=$3 WHERE id=$4';
+const SQL_INSERT_USAGE = 'INSERT INTO usage_records (flow_execution_id, node_execution_id, role_id, provider_model, prompt_tokens, completion_tokens) VALUES ($1,$2,$3,$4,$5,$6)';
 // ============================================================
 // FlowEngine
 // ============================================================
@@ -150,7 +149,7 @@ export class FlowEngine {
     this.activeExecutions.delete(executionId);
     // Immediately mark as aborted in DB (main loop may be stuck in async await)
     try {
-      db.prepare(SQL_UPDATE_FLOW_ABORTED).run(Date.now(), executionId);
+      db.query(SQL_UPDATE_FLOW_ABORTED, [Date.now(), executionId]).catch(() => { /* ignore DB error on cancel */ });
     } catch { /* ignore DB error on cancel */ }
     return true;
   }
@@ -193,7 +192,7 @@ export class FlowEngine {
     messageList.addMessage({ role: 'user', content: initialInput });
 
     const now = Date.now();
-    db.prepare(SQL_INSERT_FLOW).run(executionId, instanceName, flowConfig.id, 'running', now, 0);
+    await db.query(SQL_INSERT_FLOW, [executionId, instanceName, flowConfig.id, 'running', now, 0]);
 
     // P0 guard: validate nodes before any iteration (undefined nodes would throw TypeError)
     if (!flowConfig.nodes?.length) throw new Error(`Flow '${flowConfig.id}' has no nodes`);
@@ -242,7 +241,7 @@ export class FlowEngine {
         if (abort.signal.aborted) {
           const abortReason = abortedByGlobalTimeout ? 'global_timeout' : 'cancelled_by_user';
           const abortStatus = abortedByGlobalTimeout ? 'timeout' : 'aborted';
-          db.prepare(SQL_UPDATE_FLOW_DONE).run(abortStatus, abortReason, Date.now(), round, executionId);
+          await db.query(SQL_UPDATE_FLOW_DONE, [abortStatus, abortReason, Date.now(), round, executionId]);
           return { id: executionId, status: abortStatus, output: outputText, rounds: round, finishReason: abortReason, totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
         }
 
@@ -272,7 +271,7 @@ export class FlowEngine {
           });
           const snapshot = messageList.getInputMessagesSnapshot();
 
-          db.prepare(SQL_INSERT_NODE).run(nodeExecId, executionId, sNode.id, sNode.role_id, round, 'running', Date.now(), snapshot);
+          await db.query(SQL_INSERT_NODE, [nodeExecId, executionId, sNode.id, sNode.role_id, round, 'running', Date.now(), snapshot]);
           const nodeStartMs = Date.now();
 
           const client = new LLMClient({
@@ -401,25 +400,25 @@ export class FlowEngine {
               // Distinguish: flow-level abort (global timeout or user cancel) vs node timeout
               if (abort.signal.aborted) {
                 // Flow-level abort — let the outer while-loop handle DB update on next iteration
-                db.prepare(SQL_UPDATE_NODE_FAILED).run('aborted', Date.now(), 'Aborted by flow cancellation', nodeExecId);
+                await db.query(SQL_UPDATE_NODE_FAILED, ['aborted', Date.now(), 'Aborted by flow cancellation', nodeExecId]);
                 executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: 'Aborted by flow cancellation' });
                 // Re-check abort at top of loop
                 continue;
               }
               // Node-level timeout only
-              db.prepare(SQL_UPDATE_NODE_FAILED).run('timeout', Date.now(), 'Node execution timed out', nodeExecId);
-              db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_timeout', Date.now(), round, executionId);
+              await db.query(SQL_UPDATE_NODE_FAILED, ['timeout', Date.now(), 'Node execution timed out', nodeExecId]);
+              await db.query(SQL_UPDATE_FLOW_FAILED, ['node_timeout', Date.now(), round, executionId]);
               executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'timeout', durationMs: Date.now() - nodeStartMs, note: 'Node execution timed out' });
               return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'node_timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
             }
-            db.prepare(SQL_UPDATE_NODE_FAILED).run('failed', Date.now(), err.message ?? 'Unknown error', nodeExecId);
-            db.prepare(SQL_UPDATE_FLOW_FAILED).run('node_error', Date.now(), round, executionId);
+            await db.query(SQL_UPDATE_NODE_FAILED, ['failed', Date.now(), err.message ?? 'Unknown error', nodeExecId]);
+            await db.query(SQL_UPDATE_FLOW_FAILED, ['node_error', Date.now(), round, executionId]);
             executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: err.message ?? 'Unknown error' });
             throw err;
           }
 
-          db.prepare(SQL_UPDATE_NODE_SUCCESS).run(Date.now(), nodeOutput.slice(0, 4000), nodePrompt, nodeCompletion, nodeExecId);
-          db.prepare(SQL_INSERT_USAGE).run(executionId, nodeExecId, sNode.role_id, role.provider_model, nodePrompt, nodeCompletion);
+          await db.query(SQL_UPDATE_NODE_SUCCESS, [Date.now(), nodeOutput.slice(0, 4000), nodePrompt, nodeCompletion, nodeExecId]);
+          await db.query(SQL_INSERT_USAGE, [executionId, nodeExecId, sNode.role_id, role.provider_model, nodePrompt, nodeCompletion]);
           addUsage(sNode.role_id, nodePrompt, nodeCompletion);
           executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'ok', durationMs: Date.now() - nodeStartMs });
 
@@ -486,11 +485,12 @@ export class FlowEngine {
 
             const msgs = messageList.buildMessages(systemPrompt, { context_window: contextWindow, system_token_budget: systemBudget });
             const snapshot = messageList.getInputMessagesSnapshot();
-            db.prepare(SQL_INSERT_NODE_PARALLEL).run(nodeExecId, executionId, pNode.id, roleId, round, idx, 'running', Date.now(), snapshot);
 
             const client = new LLMClient({ provider_type: role.provider_type ?? 'openai', model: role.provider_model, api_key: role.api_key, base_url: role.base_url, max_tokens: role.max_tokens });
 
             return new Promise<{ roleId: string; nodeExecId: string; output: string | null; error: string | null; prompt: number; completion: number }>(async (resolve) => {
+              // Insert node execution record (inside async Promise to use await)
+              await db.query(SQL_INSERT_NODE_PARALLEL, [nodeExecId, executionId, pNode.id, roleId, round, idx, 'running', Date.now(), snapshot]);
               let output = '';
               let prompt = 0;
               let completion = 0;
@@ -506,11 +506,11 @@ export class FlowEngine {
                   if (chunk.usage) { prompt = chunk.usage.prompt_tokens; completion = chunk.usage.completion_tokens; }
                 }
                 clearTimeout(timer);
-                db.prepare(SQL_UPDATE_NODE_SUCCESS).run(Date.now(), output.slice(0, 4000), prompt, completion, nodeExecId);
+                await db.query(SQL_UPDATE_NODE_SUCCESS, [Date.now(), output.slice(0, 4000), prompt, completion, nodeExecId]);
                 resolve({ roleId, nodeExecId, output, error: null, prompt, completion });
               } catch (err: any) {
                 clearTimeout(timer);
-                db.prepare(SQL_UPDATE_NODE_FAILED).run(nodeAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message ?? 'Unknown', nodeExecId);
+                await db.query(SQL_UPDATE_NODE_FAILED, [nodeAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message ?? 'Unknown', nodeExecId]);
                 resolve({ roleId, nodeExecId, output: null, error: err.message ?? 'Unknown', prompt, completion });
               }
             });
@@ -531,7 +531,7 @@ export class FlowEngine {
               if (v.output !== null) {
                 allFailed = false;
                 mergedParts.push(`=== 幕僚 ${roleId} (${modelName}) 审查结果 ===\n${v.output}`);
-                db.prepare(SQL_INSERT_USAGE).run(executionId, v.nodeExecId, roleId, modelName, v.prompt, v.completion);
+                await db.query(SQL_INSERT_USAGE, [executionId, v.nodeExecId, roleId, modelName, v.prompt, v.completion]);
                 addUsage(roleId, v.prompt, v.completion);
                 executionLog.push({ nodeId: pNode.id, roleId, status: 'ok' });
               } else {
@@ -545,7 +545,7 @@ export class FlowEngine {
           }
 
           if (allFailed) {
-            db.prepare(SQL_UPDATE_FLOW_FAILED).run('all_parallel_failed', Date.now(), round, executionId);
+            await db.query(SQL_UPDATE_FLOW_FAILED, ['all_parallel_failed', Date.now(), round, executionId]);
             return { id: executionId, status: 'failed', output: outputText, rounds: round, finishReason: 'all_parallel_failed', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
           }
 
@@ -570,7 +570,7 @@ export class FlowEngine {
           const nodeExecId = uuidv4();
           const lastMsg = messageList.getMessages();
           const input = lastMsg.length > 0 ? lastMsg[lastMsg.length - 1].content : '';
-          db.prepare(SQL_INSERT_NODE).run(nodeExecId, executionId, tNode.id, 'tool:' + tNode.tool_ref, round, 'running', Date.now(), JSON.stringify([{ role: 'tool_input', content: input }]));
+          await db.query(SQL_INSERT_NODE, [nodeExecId, executionId, tNode.id, 'tool:' + tNode.tool_ref, round, 'running', Date.now(), JSON.stringify([{ role: 'tool_input', content: input }])]);
 
           const toolTimeoutMs = (tool.timeout_seconds ?? 30) * 1000;
           const toolAbort = new AbortController();
@@ -590,12 +590,12 @@ export class FlowEngine {
             if (!resp.ok) throw new Error(`Tool HTTP ${resp.status}`);
             const body: any = await resp.json();
             if (body.status !== 'success') throw new Error(body.error_message ?? 'Tool returned non-success');
-            db.prepare(SQL_UPDATE_NODE_SUCCESS).run(Date.now(), String(body.output).slice(0, 4000), 0, 0, nodeExecId);
+            await db.query(SQL_UPDATE_NODE_SUCCESS, [Date.now(), String(body.output).slice(0, 4000), 0, 0, nodeExecId]);
             messageList.addMessage({ role: 'user', content: `[工具执行结果 - ${tNode.tool_ref}]: ${body.output}` });
           } catch (err: any) {
             clearTimeout(toolTimer);
-            db.prepare(SQL_UPDATE_NODE_FAILED).run(toolAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message, nodeExecId);
-            db.prepare(SQL_UPDATE_FLOW_FAILED).run('tool_error', Date.now(), round, executionId);
+            await db.query(SQL_UPDATE_NODE_FAILED, [toolAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message, nodeExecId]);
+            await db.query(SQL_UPDATE_FLOW_FAILED, ['tool_error', Date.now(), round, executionId]);
             throw err;
           }
 
@@ -614,7 +614,7 @@ export class FlowEngine {
 
       // Finalize flow
       const status = finishReason === 'max_rounds_reached' ? 'completed' : 'completed';
-      db.prepare(SQL_UPDATE_FLOW_DONE).run(status, finishReason ?? 'stop', Date.now(), round, executionId);
+      await db.query(SQL_UPDATE_FLOW_DONE, [status, finishReason ?? 'stop', Date.now(), round, executionId]);
 
       // Build execution summary and yield as extra SSE content (only for multi-node flows or if any issue)
       // NOTE: summaryText is NOT mixed into outputText to preserve original LLM output integrity in DB
@@ -655,7 +655,7 @@ export class FlowEngine {
       return flowResult;
 
     } catch (err: any) {
-      db.prepare(SQL_UPDATE_FLOW_FAILED).run(err.message ?? 'unknown_error', Date.now(), 0, executionId);
+      await db.query(SQL_UPDATE_FLOW_FAILED, [err.message ?? 'unknown_error', Date.now(), 0, executionId]);
       throw err;
     } finally {
       clearTimeout(flowTimer);

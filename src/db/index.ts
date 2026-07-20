@@ -1,56 +1,82 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const BetterSqlite3 = require('better-sqlite3');
-import path from 'path';
-import fs from 'fs';
+import { Pool, PoolClient } from 'pg';
 
-const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '.supermodel');
-const DB_PATH = path.join(CONFIG_DIR, 'data.db');
+// Initialize connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:PgTest12345@172.236.224.19:5433/supermodel_test',
+  max: 10,
+  idleTimeoutMillis: 30000,
+});
 
-// Ensure config directory exists
-if (!fs.existsSync(CONFIG_DIR)) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-}
+// ============================================================
+// Thin wrapper to match original synchronous-style call sites
+// Usage: db.query(sql, params?) → Promise<{ rows: any[] }>
+// ============================================================
+export const db = {
+  query: (sql: string, params?: any[]) => pool.query(sql, params),
+  pool,
+};
 
-// Initialize database
-const db = new BetterSqlite3(DB_PATH);
+// ============================================================
+// initDatabase: create tables + run startup compensation
+// Must be called (awaited) before the server starts accepting requests
+// ============================================================
+export async function initDatabase(): Promise<void> {
+  // ---------- Schema DDL (PostgreSQL syntax) ----------
+  const schemaDDL = `
+    CREATE TABLE IF NOT EXISTS flow_executions (
+      id              TEXT PRIMARY KEY,
+      instance_name   TEXT NOT NULL,
+      flow_name       TEXT NOT NULL,
+      status          TEXT NOT NULL,
+      started_at      BIGINT NOT NULL,
+      finished_at     BIGINT,
+      total_rounds    INTEGER DEFAULT 0,
+      finish_reason   TEXT,
+      created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    );
 
-// Configure database
-db.pragma('journal_mode = WAL');  // Enable WAL mode for better concurrency
-db.pragma('busy_timeout = 5000'); // Set busy timeout to 5 seconds
+    CREATE TABLE IF NOT EXISTS node_executions (
+      id                      TEXT PRIMARY KEY,
+      flow_execution_id       TEXT NOT NULL REFERENCES flow_executions(id),
+      node_id                 TEXT NOT NULL,
+      role_id                 TEXT NOT NULL,
+      round                   INTEGER NOT NULL,
+      parallel_index          INTEGER,
+      status                  TEXT NOT NULL,
+      prompt_tokens           INTEGER DEFAULT 0,
+      completion_tokens       INTEGER DEFAULT 0,
+      input_messages_json     TEXT,
+      actual_messages_count   INTEGER,
+      output_text             TEXT,
+      started_at              BIGINT NOT NULL,
+      finished_at             BIGINT,
+      error_message           TEXT
+    );
 
-// Read and execute schema
-const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-db.exec(schemaSql);
+    CREATE TABLE IF NOT EXISTS usage_records (
+      id                  SERIAL PRIMARY KEY,
+      flow_execution_id   TEXT NOT NULL REFERENCES flow_executions(id),
+      node_execution_id   TEXT NOT NULL REFERENCES node_executions(id),
+      role_id             TEXT NOT NULL,
+      provider_model      TEXT NOT NULL,
+      prompt_tokens       INTEGER,
+      completion_tokens   INTEGER,
+      total_tokens        INTEGER,
+      created_at          BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    );
+  `;
 
-// Function to initialize the database and perform startup compensation
-export function initDatabase() {
-  // Apply schema migrations: add missing columns if they don't exist
-  const migrations = [
-    "ALTER TABLE node_executions ADD COLUMN error_message TEXT",
-    "ALTER TABLE node_executions ADD COLUMN input_messages_json TEXT",
-    "ALTER TABLE node_executions ADD COLUMN actual_messages_count INTEGER",
-    "ALTER TABLE node_executions ADD COLUMN output_text TEXT",
-    "ALTER TABLE node_executions ADD COLUMN parallel_index INTEGER",
-  ];
-  for (const sql of migrations) {
-    try { db.exec(sql); } catch { /* column already exists, ignore */ }
-  }
+  await pool.query(schemaDDL);
 
-  // Perform startup compensation: update any 'running' flow_executions to 'failed'
-  const updateRunningFlows = db.prepare(`
-    UPDATE flow_executions 
-    SET status = 'failed', 
-        finished_at = unixepoch('now') * 1000,
+  // ---------- Startup compensation ----------
+  // Mark any 'running' flow_executions as 'failed' (process may have crashed)
+  const result = await pool.query(`
+    UPDATE flow_executions
+    SET status = 'failed',
+        finished_at = $1,
         finish_reason = 'terminated_by_system_restart'
     WHERE status = 'running'
-  `);
-  
-  const result = updateRunningFlows.run();
-  console.log(`Compensated ${result.changes} running flow executions on startup`);
-  
-  return db;
+  `, [Date.now()]);
+
+  console.log(`Compensated ${result.rowCount} running flow executions on startup`);
 }
-
-export { db };
-
-
