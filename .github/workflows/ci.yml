@@ -43,12 +43,23 @@ jobs:
           driver: docker-container
           buildkitd-config: /tmp/buildkit/buildkitd.toml
 
-      - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: 172.236.254.239:30880
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_PASSWORD }}
+      - name: Login to Harbor (manual auth for HTTP registry)
+        shell: bash
+        run: |
+          mkdir -p ~/.docker
+          AUTH=$(echo -n "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" | base64 -w 0)
+          cat > ~/.docker/config.json << EOF
+          {
+            "auths": {
+              "172.236.254.239:30880": {
+                "auth": "${AUTH}"
+              }
+            }
+          }
+          EOF
+          echo "Docker config written."
+          curl -sf -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
+            "http://172.236.254.239:30880/v2/" && echo "Harbor reachable OK" || echo "Harbor unreachable"
 
       - name: Build and push dev
         if: env.BRANCH_NAME == 'dev'
