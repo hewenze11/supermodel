@@ -1,10 +1,18 @@
 import { Pool, PoolClient } from 'pg';
 
 // Initialize connection pool
+// PG_POOL_MAX: tune per replica. Default 20 (was 10).
+// connectionTimeoutMillis: fail fast if pool is exhausted, prevents silent hangs.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:PgTest12345@172.236.224.19:5433/supermodel_test',
-  max: 10,
+  max: parseInt(process.env.PG_POOL_MAX || '20', 10),
   idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,  // fail if no connection available within 5s
+});
+
+// Log pool errors (e.g. idle client errors) so they don't go unnoticed
+pool.on('error', (err) => {
+  console.error('[pg-pool] Unexpected idle client error:', err.message);
 });
 
 // ============================================================
