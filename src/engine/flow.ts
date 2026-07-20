@@ -406,19 +406,25 @@ export class FlowEngine {
                 continue;
               }
               // Node-level timeout only
-              await db.query(SQL_UPDATE_NODE_FAILED, ['timeout', Date.now(), 'Node execution timed out', nodeExecId]);
-              await db.query(SQL_UPDATE_FLOW_FAILED, ['node_timeout', Date.now(), round, executionId]);
+              await db.transaction(async (client) => {
+                await client.query(SQL_UPDATE_NODE_FAILED, ['timeout', Date.now(), 'Node execution timed out', nodeExecId]);
+                await client.query(SQL_UPDATE_FLOW_FAILED, ['node_timeout', Date.now(), round, executionId]);
+              });
               executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'timeout', durationMs: Date.now() - nodeStartMs, note: 'Node execution timed out' });
               return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'node_timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
             }
-            await db.query(SQL_UPDATE_NODE_FAILED, ['failed', Date.now(), err.message ?? 'Unknown error', nodeExecId]);
-            await db.query(SQL_UPDATE_FLOW_FAILED, ['node_error', Date.now(), round, executionId]);
+            await db.transaction(async (client) => {
+              await client.query(SQL_UPDATE_NODE_FAILED, ['failed', Date.now(), err.message ?? 'Unknown error', nodeExecId]);
+              await client.query(SQL_UPDATE_FLOW_FAILED, ['node_error', Date.now(), round, executionId]);
+            });
             executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: err.message ?? 'Unknown error' });
             throw err;
           }
 
-          await db.query(SQL_UPDATE_NODE_SUCCESS, [Date.now(), nodeOutput.slice(0, 4000), nodePrompt, nodeCompletion, nodeExecId]);
-          await db.query(SQL_INSERT_USAGE, [executionId, nodeExecId, sNode.role_id, role.provider_model, nodePrompt, nodeCompletion]);
+          await db.transaction(async (client) => {
+            await client.query(SQL_UPDATE_NODE_SUCCESS, [Date.now(), nodeOutput.slice(0, 4000), nodePrompt, nodeCompletion, nodeExecId]);
+            await client.query(SQL_INSERT_USAGE, [executionId, nodeExecId, sNode.role_id, role.provider_model, nodePrompt, nodeCompletion]);
+          });
           addUsage(sNode.role_id, nodePrompt, nodeCompletion);
           executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'ok', durationMs: Date.now() - nodeStartMs });
 
@@ -594,8 +600,10 @@ export class FlowEngine {
             messageList.addMessage({ role: 'user', content: `[工具执行结果 - ${tNode.tool_ref}]: ${body.output}` });
           } catch (err: any) {
             clearTimeout(toolTimer);
-            await db.query(SQL_UPDATE_NODE_FAILED, [toolAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message, nodeExecId]);
-            await db.query(SQL_UPDATE_FLOW_FAILED, ['tool_error', Date.now(), round, executionId]);
+            await db.transaction(async (client) => {
+              await client.query(SQL_UPDATE_NODE_FAILED, [toolAbort.signal.aborted ? 'timeout' : 'failed', Date.now(), err.message, nodeExecId]);
+              await client.query(SQL_UPDATE_FLOW_FAILED, ['tool_error', Date.now(), round, executionId]);
+            });
             throw err;
           }
 

@@ -22,6 +22,22 @@ pool.on('error', (err) => {
 export const db = {
   query: (sql: string, params?: any[]) => pool.query(sql, params),
   pool,
+  // Run multiple queries in a single transaction.
+  // Automatically commits on success, rolls back on any error.
+  async transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
 };
 
 // ============================================================
