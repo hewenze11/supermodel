@@ -113,7 +113,8 @@ export class ConfigLoader {
       for (const file of roleFiles) {
         if (file.endsWith('.yaml') || file.endsWith('.yml')) {
           const rolePath = path.join(rolesDir, file);
-          const rawRoleConfig = fs.readFileSync(rolePath, 'utf8');
+          const rawRoleConfig = fs.readFileSync(rolePath, 'utf8')
+            .replace(/\$\{([^}]+)\}/g, (_, varName) => process.env[varName] ?? '');
           const roleConfig: RoleConfig = yaml.load(rawRoleConfig) as RoleConfig;
           
           // Validate required fields for RoleConfig according to architecture
@@ -145,7 +146,8 @@ export class ConfigLoader {
       for (const file of flowFiles) {
         if (file.endsWith('.yaml') || file.endsWith('.yml')) {
           const flowPath = path.join(flowsDir, file);
-          const rawFlowConfig = fs.readFileSync(flowPath, 'utf8');
+          const rawFlowConfig = fs.readFileSync(flowPath, 'utf8')
+            .replace(/\$\{([^}]+)\}/g, (_, varName) => process.env[varName] ?? '');
           const flowConfig: FlowConfig = yaml.load(rawFlowConfig) as FlowConfig;
           
           // Set flow id to filename without extension
@@ -174,7 +176,8 @@ export class ConfigLoader {
       for (const file of toolFiles) {
         if (file.endsWith('.yaml') || file.endsWith('.yml')) {
           const toolPath = path.join(toolsDir, file);
-          const rawToolConfig = fs.readFileSync(toolPath, 'utf8');
+          const rawToolConfig = fs.readFileSync(toolPath, 'utf8')
+          .replace(/\$\{([^}]+)\}/g, (_, varName) => process.env[varName] ?? '');
           const toolConfig: ToolConfig = yaml.load(rawToolConfig) as ToolConfig;
           
           // Validate required fields for ToolConfig
