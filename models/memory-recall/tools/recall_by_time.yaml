@@ -1,7 +1,7 @@
 id: recall_by_time
 name: "时间范围召回"
 description: "时间范围召回。用户明确提到某个时间段时使用。"
-endpoint: "http://172.236.254.239:31012/memory/recall"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/recall"
 timeout_seconds: 10
 headers:
   Content-Type: "application/json"

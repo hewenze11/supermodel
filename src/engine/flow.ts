@@ -164,10 +164,11 @@ export class FlowEngine {
     tools: Map<string, ToolConfig>,
     initialInput: string,
     instanceName: string,
-    abortController?: AbortController
+    abortController?: AbortController,
+    extraHeaders?: Record<string, string>
   ): Promise<FlowExecutionResult> {
     // Drive the generator manually to capture the return value (not yielded)
-    const gen = this.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController);
+    const gen = this.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController, extraHeaders);
     while (true) {
       const { value, done } = await gen.next();
       if (done) {
@@ -185,7 +186,8 @@ export class FlowEngine {
     tools: Map<string, ToolConfig>,
     initialInput: string,
     instanceName: string,
-    abortController?: AbortController
+    abortController?: AbortController,
+    extraHeaders?: Record<string, string>
   ): AsyncGenerator<StreamChunk, FlowExecutionResult, void> {
     const executionId = uuidv4();
     const abort = abortController ?? new AbortController();
@@ -351,7 +353,7 @@ export class FlowEngine {
                   // Execute each tool call
                   const toolResults = await Promise.all(
                     (assistantMsg.tool_calls as unknown as ToolCall[]).map(tc =>
-                      executeToolCall(tc, tools, combinedSignal)
+                      executeToolCall(tc, tools, combinedSignal, extraHeaders)
                     )
                   );
                   // Append tool results as tool messages

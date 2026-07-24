@@ -1,7 +1,7 @@
 id: search_memory
 name: "全文搜索记忆"
 description: "全文/正则搜索。用户提到具体词语、人名、项目名时优先使用。支持时间过滤。"
-endpoint: "http://172.236.254.239:31012/memory/search"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/search"
 timeout_seconds: 10
 headers:
   Content-Type: "application/json"

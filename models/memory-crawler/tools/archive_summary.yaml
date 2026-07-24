@@ -1,7 +1,7 @@
 id: archive_summary
 name: "归档摘要"
 description: "归档本轮对话：生成L2摘要、打话题标签、选用户标签、按需更新L4核心文档。使用assistant消息的ingest返回id调用。"
-endpoint: "http://172.236.254.239:31012/memory/summarize"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/summarize"
 timeout_seconds: 30
 headers:
   Content-Type: "application/json"

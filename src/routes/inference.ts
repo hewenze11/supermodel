@@ -1,8 +1,30 @@
 import { FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import * as jwt from 'jsonwebtoken';
 import { ConfigRegistry, FlowConfig, RoleConfig } from '../config/types';
 import { FlowEngine } from '../engine/flow';
 import { SSEWriter } from '../sse/writer';
+
+const MEMCORE_JWT_SECRET = process.env.MEMCORE_JWT_SECRET || 'memcore-dev-jwt-secret-2026';
+
+/** 从请求的 X-User-Token 解析用户 ID，生成 memcore-compatible JWT */
+function buildMemcoreToken(userToken: string | undefined): string | null {
+  if (!userToken) return null;
+  try {
+    // X-User-Token 是 memory-spider-api 签的 JWT，payload.userId 是数字
+    const msSecret = process.env.MS_JWT_SECRET || 'memory-spider-jwt-secret-2026-dev';
+    const payload = jwt.verify(userToken, msSecret) as any;
+    const userId = String(payload.userId ?? payload.user_id ?? '');
+    if (!userId) return null;
+    return jwt.sign(
+      { user_id: userId, type: 'access' },
+      MEMCORE_JWT_SECRET,
+      { expiresIn: '1h', issuer: 'memcore', algorithm: 'HS256' }
+    );
+  } catch {
+    return null;
+  }
+}
 
 interface InferenceRoutesOptions {
   configRegistry: ConfigRegistry;
@@ -114,6 +136,13 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     }
     const { instanceName, flowConfig, roles, tools } = resolved;
 
+    // Build memcore auth header from X-User-Token
+    const userToken = req.headers['x-user-token'] as string | undefined;
+    const memcoreToken = buildMemcoreToken(userToken);
+    const extraHeaders: Record<string, string> = memcoreToken
+      ? { 'Authorization': `Bearer ${memcoreToken}` }
+      : {};
+
     // Build initial input from messages — preserve conversation history per arch M6.4
     // Serialize all user/assistant turns as context, system msg prepended to initialInput
     const systemMsg = (messages as any[]).find((m: any) => m.role === 'system')?.content ?? '';
@@ -158,7 +187,7 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }]
         });
 
-        const genResult = flowEngine.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController);
+        const genResult = flowEngine.executeFlowStreaming(flowConfig, roles, tools, initialInput, instanceName, abortController, extraHeaders);
         let flowResult: any = null;
         for await (const chunk of genResult) {
           // Internal marker chunk carrying FlowExecutionResult — don't forward to client
@@ -203,7 +232,7 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
 
     // Non-streaming
     try {
-      const result = await flowEngine.executeFlow(flowConfig, roles, tools, initialInput, instanceName, abortController);
+      const result = await flowEngine.executeFlow(flowConfig, roles, tools, initialInput, instanceName, abortController, extraHeaders);
       return {
         id: `chatcmpl-${result.id}`,
         object: 'chat.completion',

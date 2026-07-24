@@ -48,7 +48,8 @@ export function buildOpenAITools(toolConfigs: ToolConfig[]): any[] {
 export async function executeToolCall(
   toolCall: ToolCall,
   toolConfigs: Map<string, ToolConfig>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  extraHeaders?: Record<string, string>
 ): Promise<ToolResult> {
   const tool = toolConfigs.get(toolCall.function.name);
   if (!tool) {
@@ -78,7 +79,8 @@ export async function executeToolCall(
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(tool.headers ?? {})
+      ...(tool.headers ?? {}),
+      ...(extraHeaders ?? {})  // 动态 headers 优先级最高（如用户 memcore token）
     };
 
     // If the tool has a `request_body_mode: "passthrough"` config (or default),
