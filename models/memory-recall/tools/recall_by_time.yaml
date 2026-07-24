@@ -1,0 +1,19 @@
+id: recall_by_time
+name: "时间范围召回"
+description: "时间范围召回。用户明确提到某个时间段时使用。"
+endpoint: "http://172.236.254.239:31012/memory/recall"
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  properties:
+    time_from:
+      type: string
+      description: "起始时间，UTC ISO8601"
+    time_to:
+      type: string
+      description: "结束时间，UTC ISO8601"
+    limit:
+      type: integer
+      description: "返回上限，默认50"

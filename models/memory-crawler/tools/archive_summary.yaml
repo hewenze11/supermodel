@@ -1,0 +1,42 @@
+id: archive_summary
+name: "归档摘要"
+description: "归档本轮对话：生成L2摘要、打话题标签、选用户标签、按需更新L4核心文档。使用assistant消息的ingest返回id调用。"
+endpoint: "http://172.236.254.239:31012/memory/summarize"
+timeout_seconds: 30
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [message_id, summary, topic_name]
+  properties:
+    message_id:
+      type: string
+      description: "assistant消息ingest返回的id（UUID）"
+    summary:
+      type: string
+      description: "本轮对话摘要（100-500字，含：核心内容、结论决策、重要实体、待办事项）"
+    topic_name:
+      type: string
+      description: "话题名称（反映连续对话的具体主题，优先复用已有话题）"
+    tags:
+      type: array
+      items:
+        type: string
+      description: "用户自定义标签名数组（只能从get_tags返回的标签中选，没有合适的传空数组）"
+    doc_updates:
+      type: array
+      description: "需要更新的L4核心文档（仅trigger_desc触发时填写）"
+      items:
+        type: object
+        required: [doc_id, new_content, write_mode]
+        properties:
+          doc_id:
+            type: string
+            description: "核心文档UUID"
+          new_content:
+            type: string
+            description: "要写入的内容"
+          write_mode:
+            type: string
+            enum: [overwrite, append]
+            description: "overwrite=覆盖，append=追加"

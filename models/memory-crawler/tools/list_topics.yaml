@@ -1,0 +1,5 @@
+id: list_topics
+name: "获取话题列表"
+description: "获取用户已有的话题列表。归档前调用，优先复用已有话题，避免重复创建相似话题。"
+endpoint: "http://172.236.254.239:31012/memory/topics/list"
+timeout_seconds: 10

@@ -1,0 +1,14 @@
+id: search_by_topic
+name: "话题标签检索"
+description: "话题标签检索。话题明确时使用，或用户消息包含#标签时强制使用（标签名从#后提取）。"
+endpoint: "http://172.236.254.239:31012/memory/topics"
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [tags]
+  properties:
+    tags:
+      type: string
+      description: "标签名，多个用英文逗号分隔，大小写不敏感"

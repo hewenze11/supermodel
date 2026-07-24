@@ -1,0 +1,21 @@
+id: ingest_message
+name: "写入消息"
+description: "写入一条原始对话消息（L1层）。每轮对话结束后调用两次：先写user消息，再写assistant消息。返回消息id，归档时需要用assistant消息的id。"
+endpoint: "http://172.236.254.239:31012/memory/ingest"
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [session_id, role, content]
+  properties:
+    session_id:
+      type: string
+      description: "会话ID，同一对话保持不变"
+    role:
+      type: string
+      enum: [user, assistant]
+      description: "消息角色，先写user再写assistant"
+    content:
+      type: string
+      description: "消息内容"

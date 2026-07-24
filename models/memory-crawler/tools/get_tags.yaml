@@ -1,0 +1,5 @@
+id: get_tags
+name: "获取标签库"
+description: "获取用户的全部自定义标签库。归档前必须调用，确认可用的标签名称，只能从返回结果中选标签。"
+endpoint: "http://172.236.254.239:31012/memory/tags"
+timeout_seconds: 10

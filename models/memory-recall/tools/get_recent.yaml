@@ -1,0 +1,5 @@
+id: get_recent
+name: "强制加载近期记忆"
+description: "强制加载：获取最近20条L1原始对话 + 最近200条L2摘要 + 全量L4核心文档。每次召回必须首先调用，不可跳过。"
+endpoint: "http://172.236.254.239:31012/memory/recent"
+timeout_seconds: 15

@@ -1,0 +1,27 @@
+id: search_memory
+name: "全文搜索记忆"
+description: "全文/正则搜索。用户提到具体词语、人名、项目名时优先使用。支持时间过滤。"
+endpoint: "http://172.236.254.239:31012/memory/search"
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "搜索词，支持正则"
+    mode:
+      type: string
+      enum: [fulltext, regex]
+      description: "搜索模式，默认fulltext"
+    time_from:
+      type: string
+      description: "起始时间，UTC ISO8601，如 2026-07-01T00:00:00Z"
+    time_to:
+      type: string
+      description: "结束时间，UTC ISO8601"
+    limit:
+      type: integer
+      description: "返回上限，最大100，默认20"

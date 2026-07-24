@@ -1,0 +1,17 @@
+id: recall_by_day
+name: "按天查询"
+description: "按天查询。用户问某天聊了什么时使用。"
+endpoint: "http://172.236.254.239:31012/memory/daily"
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [date]
+  properties:
+    date:
+      type: string
+      description: "日期，格式 YYYY-MM-DD"
+    timezone:
+      type: string
+      description: "时区，如 Asia/Shanghai，默认UTC"
