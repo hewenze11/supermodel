@@ -1,14 +1,14 @@
 id: recall
 description: "召回流程：对话前执行，从记忆系统召回相关记忆注入上下文"
+output_node: recall_node
 max_rounds: 15
 timeout_seconds: 60
 
 nodes:
   - id: recall_node
-    type: entry
-    role: recall
-    stream_to_client: true
-    history_mode: none
+    type: serial
+    role_id: recall
+    timeout_seconds: 60
     prompt: |
       用户消息：{{user_message}}
       当前时间（UTC）：{{current_time}}
@@ -29,5 +29,3 @@ nodes:
       【检索到的相关记忆】
       {额外检索结果，如有}
       ---
-      
-      [signal:terminate]
