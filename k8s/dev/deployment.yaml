@@ -31,28 +31,37 @@ spec:
           value: "redis://:RedisTest12345@172.236.224.19:6380"
         - name: MEMORY_API_BASE_URL
           value: "http://172.236.254.239:31012"
-        # API Keys 从 Secret 注入，Secret 名: supermodel-secrets
         - name: APIMART_API_KEY
           valueFrom:
             secretKeyRef:
               name: supermodel-secrets
               key: APIMART_API_KEY
-              optional: true
+        - name: SUPERMODEL_API_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: supermodel-secrets
+              key: SUPERMODEL_API_KEYS
         livenessProbe:
           httpGet:
             path: /health
             port: 11451
-          initialDelaySeconds: 10
+            httpHeaders:
+            - name: Authorization
+              value: "Bearer sm-memory-spider-dev-2026"
+          initialDelaySeconds: 15
           periodSeconds: 30
           failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 11451
-          initialDelaySeconds: 10
+            httpHeaders:
+            - name: Authorization
+              value: "Bearer sm-memory-spider-dev-2026"
+          initialDelaySeconds: 15
           periodSeconds: 30
           failureThreshold: 3
-      # 不再依赖宿主机目录，配置已打进镜像
+      # 配置已打进镜像，不依赖宿主机目录
 ---
 apiVersion: v1
 kind: Service
