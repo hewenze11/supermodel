@@ -10,21 +10,15 @@ nodes:
     role_id: crawler
     timeout_seconds: 120
     prompt: |
-      现在执行归档任务。
-      
-      输入变量：
-      - user_message: {{user_message}}（本轮用户消息）
-      - assistant_message: {{assistant_message}}（本轮AI回复）
-      - session_id: {{session_id}}（当前会话ID）
-      
-      执行步骤：
+      请归档上面的对话内容（user 消息和 assistant 消息均在输入中）。
+      请严格按以下步骤执行（每步都必须实际调用工具，不可只描述）：
       1. 调用 list_topics 查看已有话题
       2. 调用 get_tags 查看用户标签库
-      3. 调用 ingest_message 写入 user 消息（role=user，content={{user_message}}）
-      4. 调用 ingest_message 写入 assistant 消息（role=assistant，content={{assistant_message}}），保存返回的 id
-      5. 生成本轮对话摘要（100-500字）
-      6. 决定话题名称（参考已有话题，优先复用）
+      3. 从对话中提取 user 消息内容，调用 ingest_message 写入（role=user）
+      4. 从对话中提取 assistant 消息内容，调用 ingest_message 写入（role=assistant），保存返回的 id
+      5. 生成本轮对话摘要（100-500字，含核心内容+结论+重要实体）
+      6. 决定话题名称（参考已有话题，优先复用；连续对话共用话题）
       7. 从标签库中选择合适的标签（没有合适的传空数组）
-      8. 调用 archive_summary 完成归档
+      8. 调用 archive_summary 完成归档（传入步骤4的 assistant message id、摘要、话题名、标签）
       
-      完成后输出："归档完成"即可，不需要其他内容。
+      完成后输出："归档完成"即可。

@@ -10,11 +10,8 @@ nodes:
     role_id: recall
     timeout_seconds: 60
     prompt: |
-      用户消息：{{user_message}}
-      当前时间（UTC）：{{current_time}}
-      
-      请执行记忆召回：
-      1. 强制调用 get_recent 加载最近上下文
+      根据上面用户消息，执行记忆召回：
+      1. 强制调用 get_recent 加载最近上下文（必须执行，不可跳过）
       2. 分析用户消息，判断是否需要额外检索
       3. 如需要，调用对应检索工具（可组合多个）
       4. 整合所有召回结果，按以下格式输出：
