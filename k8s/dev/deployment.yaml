@@ -29,9 +29,15 @@ spec:
           value: "postgresql://postgres:PgTest12345@172.236.224.19:5433/supermodel_test"
         - name: REDIS_URL
           value: "redis://:RedisTest12345@172.236.224.19:6380"
-        volumeMounts:
-        - name: supermodel-config
-          mountPath: /root/.supermodel
+        - name: MEMORY_API_BASE_URL
+          value: "http://172.236.254.239:31012"
+        # API Keys 从 Secret 注入，Secret 名: supermodel-secrets
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: supermodel-secrets
+              key: DEEPSEEK_API_KEY
+              optional: true
         livenessProbe:
           httpGet:
             path: /health
@@ -46,11 +52,7 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 30
           failureThreshold: 3
-      volumes:
-      - name: supermodel-config
-        hostPath:
-          path: /root/.supermodel
-          type: DirectoryOrCreate
+      # 不再依赖宿主机目录，配置已打进镜像
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,94 @@
+tools:
+  - id: ingest_message
+    type: http
+    description: "写入一条原始对话消息（L1）。每轮对话结束后调用两次：先写user，再写assistant。"
+    method: POST
+    url: "${MEMORY_API_BASE_URL}/memory/ingest"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+      Content-Type: "application/json"
+    parameters:
+      type: object
+      required: [session_id, role, content]
+      properties:
+        session_id:
+          type: string
+          description: "会话ID，由接入产品传入（对话窗口唯一ID），同一对话保持不变"
+        role:
+          type: string
+          enum: [user, assistant]
+          description: "消息角色，先写user再写assistant"
+        content:
+          type: string
+          description: "消息内容"
+        product_id:
+          type: string
+          description: "接入产品标识，如 roundtable（可选）"
+
+  - id: archive_summary
+    type: http
+    description: "归档本轮对话：生成L2摘要 + 打话题标签 + 选用户标签 + 按需更新L4核心文档。使用 assistant 消息的 ingest 返回 id。"
+    method: POST
+    url: "${MEMORY_API_BASE_URL}/memory/summarize"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+      Content-Type: "application/json"
+    parameters:
+      type: object
+      required: [message_id, summary, topic_name]
+      properties:
+        message_id:
+          type: string
+          description: "步骤1中 assistant 消息 ingest 返回的 id（UUID）"
+        summary:
+          type: string
+          description: "本轮对话的L2摘要（100-500字，含：核心内容、结论决策、重要实体、待办事项）"
+        topic_name:
+          type: string
+          description: "话题名称（AI自主决定，必须反映连续对话的具体主题）"
+        tags:
+          type: array
+          items:
+            type: string
+          description: "用户自定义标签名数组（只能从 get_tags 返回的标签中选）"
+        doc_updates:
+          type: array
+          description: "需要更新的L4核心文档（仅在 trigger_desc 触发时填写）"
+          items:
+            type: object
+            required: [doc_id, new_content, write_mode]
+            properties:
+              doc_id:
+                type: string
+                description: "核心文档UUID（从 /memory/recent 返回的 l4[].id 取）"
+              new_content:
+                type: string
+                description: "要写入的内容"
+              write_mode:
+                type: string
+                enum: [overwrite, append]
+                description: "overwrite=覆盖旧内容（有冲突时），append=追加到末尾（新增内容时）"
+
+  - id: get_tags
+    type: http
+    description: "获取用户的全部自定义标签库。归档前必须调用此接口，确认可用的标签名称。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/tags"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+
+  - id: list_topics
+    type: http
+    description: "获取用户已有的话题列表。归档前调用，优先复用已有话题，避免重复创建。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/topics/list"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+
+  - id: get_l4_docs
+    type: http
+    description: "获取用户的L4核心文档列表（包含 trigger_desc 字段）。判断是否需要更新核心文档时调用。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/docs"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"

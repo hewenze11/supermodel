@@ -38,9 +38,18 @@ RUN npm install && npm prune --production
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/db/schema.sql ./src/db/
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && adduser -S supermodel -u 1001
+# Copy default model configs into image
+# API Keys and sensitive values are injected at runtime via K8s Secret env vars
+COPY models/ /root/.supermodel/models/
+
+# Create non-root user (must run after COPY to /root)
+RUN addgroup -g 1001 -S nodejs && adduser -S supermodel -u 1001 \
+    && mkdir -p /home/supermodel/.supermodel \
+    && cp -r /root/.supermodel/models /home/supermodel/.supermodel/ \
+    && chown -R supermodel:nodejs /home/supermodel/.supermodel
 USER supermodel
+
+ENV SUPERMODEL_HOME=/home/supermodel/.supermodel
 
 EXPOSE 11451 11435
 

@@ -1,0 +1,144 @@
+tools:
+  - id: get_recent
+    type: http
+    description: "强制加载：获取最近20条L1原始对话 + 最近200条L2摘要 + 全量L4核心文档。每次召回必须首先调用。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/recent"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+
+  - id: search_memory
+    type: http
+    description: "全文/正则搜索。用户提到具体词语、人名、项目名时优先使用。支持时间过滤。"
+    method: POST
+    url: "${MEMORY_API_BASE_URL}/memory/search"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+      Content-Type: "application/json"
+    parameters:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: "搜索词，支持正则"
+        mode:
+          type: string
+          enum: [fulltext, regex]
+          description: "搜索模式，默认fulltext"
+        layers:
+          type: array
+          items:
+            type: string
+            enum: [L1, L2]
+          description: "搜索层级，默认两层都搜"
+        time_from:
+          type: string
+          description: "起始时间，UTC ISO8601，如 2026-07-01T00:00:00Z"
+        time_to:
+          type: string
+          description: "结束时间，UTC ISO8601"
+        limit:
+          type: integer
+          description: "返回上限，最大100，默认20"
+
+  - id: semantic_search
+    type: http
+    description: "向量语义搜索。用户描述模糊印象/概念时使用，需传入锚点文本的embedding向量。"
+    method: POST
+    url: "${MEMORY_API_BASE_URL}/memory/semantic"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+      Content-Type: "application/json"
+    parameters:
+      type: object
+      required: [anchor_embedding]
+      properties:
+        anchor_embedding:
+          type: array
+          items:
+            type: number
+          description: "锚点文本的embedding向量数组（需先将描述文本转为embedding）"
+        top_k:
+          type: integer
+          description: "返回最相似条数，默认20，最大100"
+        time_from:
+          type: string
+          description: "起始时间过滤，UTC ISO8601"
+        time_to:
+          type: string
+          description: "结束时间过滤，UTC ISO8601"
+
+  - id: search_by_topic
+    type: http
+    description: "话题标签检索。话题明确时使用，或用户消息包含#标签时强制使用。支持多标签逗号分隔。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/topics"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+    parameters:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: string
+          description: "标签名，多个用英文逗号分隔（会自动URL encode），大小写不敏感"
+
+  - id: recall_by_time
+    type: http
+    description: "时间范围召回。用户明确提到某个时间段时使用。"
+    method: POST
+    url: "${MEMORY_API_BASE_URL}/memory/recall"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+      Content-Type: "application/json"
+    parameters:
+      type: object
+      properties:
+        time_from:
+          type: string
+          description: "起始时间，UTC ISO8601"
+        time_to:
+          type: string
+          description: "结束时间，UTC ISO8601"
+        session_id:
+          type: string
+          description: "限定特定会话（可选）"
+        layers:
+          type: array
+          items:
+            type: string
+          description: "召回层级，默认['L1','L2']"
+        merge_mode:
+          type: string
+          enum: [union, intersection]
+          description: "union=L1+L2合并返回；intersection=只返回同时有L1和L2的会话"
+        limit:
+          type: integer
+          description: "返回上限，默认50"
+
+  - id: recall_by_day
+    type: http
+    description: "按天查询。用户问某天聊了什么时使用。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/daily"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"
+    parameters:
+      type: object
+      required: [date]
+      properties:
+        date:
+          type: string
+          description: "日期，格式 YYYY-MM-DD"
+        timezone:
+          type: string
+          description: "时区，如 Asia/Shanghai，默认UTC"
+
+  - id: get_tags
+    type: http
+    description: "获取用户的全部自定义标签库（供话题检索参考）。"
+    method: GET
+    url: "${MEMORY_API_BASE_URL}/memory/tags"
+    headers:
+      Authorization: "Bearer ${USER_TOKEN}"

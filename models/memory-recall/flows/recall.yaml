@@ -1,0 +1,33 @@
+id: recall
+description: "召回流程：对话前执行，从记忆系统召回相关记忆注入上下文"
+max_rounds: 15
+timeout_seconds: 60
+
+nodes:
+  - id: recall_node
+    type: entry
+    role: recall
+    stream_to_client: true
+    history_mode: none
+    prompt: |
+      用户消息：{{user_message}}
+      当前时间（UTC）：{{current_time}}
+      
+      请执行记忆召回：
+      1. 强制调用 get_recent 加载最近上下文
+      2. 分析用户消息，判断是否需要额外检索
+      3. 如需要，调用对应检索工具（可组合多个）
+      4. 整合所有召回结果，按以下格式输出：
+      
+      ---
+      【长期记忆（核心文档）】
+      {L4文档内容，按文档标题分段}
+      
+      【近期对话】
+      {最近的L1/L2内容，按时间倒序}
+      
+      【检索到的相关记忆】
+      {额外检索结果，如有}
+      ---
+      
+      [signal:terminate]

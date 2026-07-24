@@ -1,0 +1,32 @@
+id: archive
+description: "归档流程：算力模型返回结果后异步执行，将本轮对话写入记忆系统"
+max_rounds: 10
+timeout_seconds: 120
+
+nodes:
+  - id: archive_node
+    type: entry
+    role: crawler
+    stream_to_client: false
+    history_mode: none
+    prompt: |
+      现在执行归档任务。
+      
+      输入变量：
+      - user_message: {{user_message}}（本轮用户消息）
+      - assistant_message: {{assistant_message}}（本轮AI回复）
+      - session_id: {{session_id}}（当前会话ID）
+      - user_token: {{user_token}}（用户认证token，已注入到工具调用中）
+      
+      执行步骤：
+      1. 调用 list_topics 查看已有话题
+      2. 调用 get_tags 查看用户标签库
+      3. 调用 ingest_message 写入 user 消息（role=user，content={{user_message}}）
+      4. 调用 ingest_message 写入 assistant 消息（role=assistant，content={{assistant_message}}），保存返回的 id
+      5. 生成本轮对话摘要（100-500字）
+      6. 决定话题名称（参考已有话题，优先复用）
+      7. 从标签库中选择合适的标签（没有合适的传空数组）
+      8. 调用 archive_summary 完成归档
+      
+      完成后输出："归档完成"即可，不需要其他内容。
+      [signal:terminate]
