@@ -83,28 +83,40 @@ export async function executeToolCall(
       ...(extraHeaders ?? {})  // 动态 headers 优先级最高（如用户 memcore token）
     };
 
-    // If the tool has a `request_body_mode: "passthrough"` config (or default),
-    // send the LLM's parsed args directly as the request body.
-    // This allows direct integration with external APIs like Serper, Brave, etc.
-    // Legacy mode: wrap in {"input": ..., "context": {...}} for internal tool servers.
-    const usePassthrough = (tool as any).request_body_mode !== 'legacy';
-    const body = usePassthrough
-      ? JSON.stringify(parsedArgs)
-      : JSON.stringify({
-          input,
-          context: {
-            tool_id: tool.id,
-            tool_name: tool.name,
-            call_mode: 'ai_tool_call'
-          }
-        });
+    // Support GET method: append params as query string, no body
+    const httpMethod = ((tool as any).method ?? 'POST').toUpperCase();
+    let fetchUrl = tool.endpoint;
+    let body: string | undefined;
 
-    console.log(`[tool-exec] tool=${tool.id} endpoint=${tool.endpoint} body=${body.slice(0,200)}`);
+    if (httpMethod === 'GET') {
+      // Append non-empty params as query string
+      const qs = Object.entries(parsedArgs)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+        .join('&');
+      if (qs) fetchUrl = `${fetchUrl}?${qs}`;
+      delete headers['Content-Type'];
+      body = undefined;
+    } else {
+      const usePassthrough = (tool as any).request_body_mode !== 'legacy';
+      body = usePassthrough
+        ? JSON.stringify(parsedArgs)
+        : JSON.stringify({
+            input,
+            context: {
+              tool_id: tool.id,
+              tool_name: tool.name,
+              call_mode: 'ai_tool_call'
+            }
+          });
+    }
 
-    const resp = await fetch(tool.endpoint, {
-      method: 'POST',
+    console.log(`[tool-exec] tool=${tool.id} method=${httpMethod} endpoint=${fetchUrl} body=${body?.slice(0,200) ?? '(none)'}`);
+
+    const resp = await fetch(fetchUrl, {
+      method: httpMethod,
       headers,
-      body,
+      ...(body !== undefined ? { body } : {}),
       signal: controller.signal
     });
 
