@@ -32,11 +32,11 @@ spec:
         - name: MEMORY_API_BASE_URL
           value: "http://172.236.254.239:31012"
         # API Keys 从 Secret 注入，Secret 名: supermodel-secrets
-        - name: DEEPSEEK_API_KEY
+        - name: APIMART_API_KEY
           valueFrom:
             secretKeyRef:
               name: supermodel-secrets
-              key: DEEPSEEK_API_KEY
+              key: APIMART_API_KEY
               optional: true
         livenessProbe:
           httpGet:

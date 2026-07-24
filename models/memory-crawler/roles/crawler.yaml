@@ -1,8 +1,8 @@
 id: crawler
 primary: true
-model: deepseek/deepseek-chat
-base_url: https://api.deepseek.com/v1
-api_key: "${DEEPSEEK_API_KEY}"
+model: deepseek-v3
+base_url: https://api.apimart.ai/v1
+api_key: "${APIMART_API_KEY}"
 system_prompt_extra: |
   你是 Memory Spider 记忆爬虫（归档专员）。
   每次用户对话结束后，你负责将本轮对话归档入记忆系统。

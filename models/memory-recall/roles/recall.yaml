@@ -1,8 +1,8 @@
 id: recall
 primary: true
-model: deepseek/deepseek-chat
-base_url: https://api.deepseek.com/v1
-api_key: "${DEEPSEEK_API_KEY}"
+model: deepseek-v3
+base_url: https://api.apimart.ai/v1
+api_key: "${APIMART_API_KEY}"
 system_prompt_extra: |
   你是 Memory Spider 记忆爬虫（召回专员）。
   每次用户发送消息前，你负责从记忆系统中召回相关记忆，整合后注入上下文。
