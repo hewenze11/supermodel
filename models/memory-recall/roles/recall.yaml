@@ -3,7 +3,7 @@ primary: true
 provider_type: openai
 base_url: "https://api.apimart.ai/v1"
 api_key: "${APIMART_API_KEY}"
-provider_model: "deepseek-v3"
+provider_model: "deepseek-v3.2"
 temperature: 0.3
 max_tokens: 4096
 system_prompt_extra: |
