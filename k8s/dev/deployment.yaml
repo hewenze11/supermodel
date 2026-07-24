@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: supermodel
-        image: 172.236.254.239:30880/supermodel/supermodel:dev-141dea4
+        image: 172.236.254.239:30880/supermodel/supermodel:dev-44f99cc
         imagePullPolicy: Always
         ports:
         - containerPort: 11451
