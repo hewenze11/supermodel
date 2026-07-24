@@ -183,8 +183,12 @@ export class LLMClient {
           'Authorization': `Bearer ${this.config.api_key}`
         },
         body: JSON.stringify({
-          ...request,
-          stream: true
+          model: request.model,
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.max_tokens,
+          stream: true,
+          stream_options: { include_usage: true }
         }),
         signal: controller.signal
       });
