@@ -11,7 +11,7 @@ const MEMCORE_JWT_SECRET = process.env.MEMCORE_JWT_SECRET || 'memcore-dev-jwt-se
 function buildMemcoreToken(userToken: string | undefined): string | null {
   if (!userToken) return null;
   try {
-    // X-User-Token 是 memory-spider-api 签的 JWT，payload.userId 是数字
+    // 优先：X-User-Token 是 memory-spider-api 签的 JWT，payload.userId 是数字
     const msSecret = process.env.MS_JWT_SECRET || 'memory-spider-jwt-secret-2026-dev';
     const payload = jwt.verify(userToken, msSecret) as any;
     const userId = String(payload.userId ?? payload.user_id ?? '');
@@ -22,6 +22,11 @@ function buildMemcoreToken(userToken: string | undefined): string | null {
       { expiresIn: '1h', issuer: 'memcore', algorithm: 'HS256' }
     );
   } catch {
+    // 降级：X-User-Token 可能本身就是 memcore JWT，直接透传
+    try {
+      const payload = jwt.verify(userToken, MEMCORE_JWT_SECRET) as any;
+      if (payload.user_id) return userToken;
+    } catch {}
     return null;
   }
 }
