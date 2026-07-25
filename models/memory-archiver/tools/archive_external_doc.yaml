@@ -1,7 +1,7 @@
 id: archive_external_doc
 name: "归档外联文档"
 description: "将生成的摘要写入 L4 core_docs，并标记外联文档归档完成（status=done）。"
-endpoint: "http://memcore-api-headless.dev-memcore.svc.cluster.local:3000/memory/external/archive"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/external/archive"
 timeout_seconds: 30
 headers:
   Content-Type: "application/json"
