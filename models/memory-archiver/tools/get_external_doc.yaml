@@ -1,0 +1,14 @@
+id: get_external_doc
+name: "获取外联文档内容"
+description: "获取一个外联文档的所有切片原文，用于生成摘要。传入 doc_id，返回拼接后的完整文本。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/external/content"
+timeout_seconds: 30
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [doc_id]
+  properties:
+    doc_id:
+      type: string
+      description: "外联文档的 UUID（external_docs.id）"
