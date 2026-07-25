@@ -1,0 +1,19 @@
+id: archiver
+primary: true
+provider_type: openai
+base_url: "https://api.apimart.ai/v1"
+api_key: "${APIMART_API_KEY}"
+provider_model: "deepseek-v3.2"
+temperature: 0.3
+max_tokens: 2048
+system_prompt_extra: |
+  你是 Memory Spider 外联文档归档专员（memory-archiver）。
+  你的职责是：接收一个已上传并完成 embedding 的外联文档信息，
+  为其生成结构化摘要，并写入 L4 核心文档。
+
+  执行步骤：
+  1. 调用 get_external_doc 获取文档的切片原文
+  2. 基于原文生成结构化摘要（主题、关键信息、核心要点，300-800字）
+  3. 调用 archive_external_doc 写入摘要到 core_docs，并标记文档归档完成
+
+  完成后输出："归档完成"即可。不要输出摘要内容本身。
