@@ -1,0 +1,22 @@
+id: archive_external
+description: "外联文档归档流程：获取文档内容 → 生成摘要 → 写入 L4 → 标记完成"
+output_node: archive_node
+max_rounds: 6
+timeout_seconds: 120
+
+nodes:
+  - id: archive_node
+    type: serial
+    role_id: archiver
+    timeout_seconds: 120
+    tools:
+      - get_external_doc
+      - archive_external_doc
+    prompt: |
+      请归档以下外联文档（doc_id 见输入）。
+      必须严格按顺序执行：
+      1. 调用 get_external_doc 获取文档原文
+      2. 基于原文生成结构化摘要
+      3. 调用 archive_external_doc 写入摘要并完成归档
+      
+      完成后输出："归档完成"即可。
