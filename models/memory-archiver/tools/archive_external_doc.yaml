@@ -1,0 +1,20 @@
+id: archive_external_doc
+name: "归档外联文档"
+description: "将生成的摘要写入 L4 core_docs，并标记外联文档归档完成（status=done）。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/external/archive"
+timeout_seconds: 30
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [doc_id, summary]
+  properties:
+    doc_id:
+      type: string
+      description: "外联文档的 UUID"
+    summary:
+      type: string
+      description: "文档的结构化摘要（300-800字，含主题、关键信息、核心要点）"
+    doc_title:
+      type: string
+      description: "L4 核心文档标题（默认用文件名，可自定义）"
