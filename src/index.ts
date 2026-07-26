@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
 import path from 'path';
 import fs from 'fs';
@@ -42,6 +43,14 @@ class SuperModelServer {
     // Create inference server (public API)
     this.inferenceServer = Fastify({
       logger: true,
+    });
+
+    // Register CORS for inference server (public API, allow all origins)
+    await this.inferenceServer.register(cors, {
+      origin: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Product-ID'],
+      credentials: true,
     });
 
     // Health check endpoint (for K8s liveness/readiness probes)
