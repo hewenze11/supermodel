@@ -1,0 +1,59 @@
+id: archive-x4
+description: "4并发归档流程：大记忆量场景，调度器分4组并发归档"
+output_node: merge_node
+max_rounds: 25
+timeout_seconds: 240
+
+nodes:
+  - id: dispatch_node
+    type: serial
+    role_id: dispatcher
+    timeout_seconds: 60
+    tools:
+      - get_recent_meta
+      - get_tags
+      - list_topics
+    prompt: |
+      请分析本轮对话和记忆元数据，输出分配方案（严格 JSON 格式，4组）。
+
+  - id: parallel_crawlers
+    type: parallel
+    nodes:
+      - id: sub_crawler_1
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools: [search_by_ids, get_tags]
+        prompt: "处理调度器分配给爬虫1的记忆（crawlers[0]），按格式输出局部归档结果。"
+      - id: sub_crawler_2
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools: [search_by_ids, get_tags]
+        prompt: "处理调度器分配给爬虫2的记忆（crawlers[1]），按格式输出局部归档结果。"
+      - id: sub_crawler_3
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools: [search_by_ids, get_tags]
+        prompt: "处理调度器分配给爬虫3的记忆（crawlers[2]），按格式输出局部归档结果。"
+      - id: sub_crawler_4
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools: [search_by_ids, get_tags]
+        prompt: "处理调度器分配给爬虫4的记忆（crawlers[3]），按格式输出局部归档结果。"
+
+  - id: merge_node
+    type: serial
+    role_id: crawler
+    timeout_seconds: 90
+    tools: [ingest_message, archive_summary]
+    prompt: |
+      汇总上面4个子爬虫的局部归档结果，完成最终写入：
+      1. ingest_message 写 user 消息
+      2. ingest_message 写 assistant 消息，保存 id
+      3. 将4个子爬虫 summary 合并（300-800字）
+      4. 合并 tags 去重
+      5. archive_summary 完成归档
+      输出："并发归档完成（x4）"
