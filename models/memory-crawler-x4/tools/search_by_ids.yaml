@@ -1,0 +1,10 @@
+name: search_by_ids
+description: "根据 message_id 列表批量拉取记忆内容，供子爬虫处理"
+method: POST
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/search-by-ids"
+headers:
+  Authorization: "Bearer ${X_USER_TOKEN}"
+  Content-Type: "application/json"
+  X-Product-ID: "memory-spider"
+body:
+  message_ids: "${input}"
