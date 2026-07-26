@@ -1,0 +1,65 @@
+id: archive-x2
+description: "2并发归档流程：召回量大时由调度器分两组并发归档，最后主爬虫汇总"
+output_node: merge_node
+max_rounds: 20
+timeout_seconds: 180
+
+nodes:
+  # 第一步：调度器分析元数据，输出分配方案
+  - id: dispatch_node
+    type: serial
+    role_id: dispatcher
+    timeout_seconds: 60
+    tools:
+      - get_recent_meta
+      - get_tags
+      - list_topics
+    prompt: |
+      请分析本轮对话和记忆元数据，输出分配方案（严格 JSON 格式）。
+      1. 调用 get_recent_meta 获取最近记忆元数据（只要 id/tags/created_at，不要全文）
+      2. 调用 get_tags 查看可用标签
+      3. 调用 list_topics 查看已有话题
+      4. 输出分配 JSON（2组，每组分配给一个子爬虫）
+
+  # 第二步：2个子爬虫并发处理
+  - id: parallel_crawlers
+    type: parallel
+    nodes:
+      - id: sub_crawler_1
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools:
+          - search_by_ids
+          - get_tags
+        prompt: |
+          处理调度器分配给爬虫1的记忆（从上面调度器输出的 JSON 中取 crawlers[0]）。
+          按格式输出局部归档结果。
+      
+      - id: sub_crawler_2
+        type: serial
+        role_id: sub-crawler
+        timeout_seconds: 90
+        tools:
+          - search_by_ids
+          - get_tags
+        prompt: |
+          处理调度器分配给爬虫2的记忆（从上面调度器输出的 JSON 中取 crawlers[1]）。
+          按格式输出局部归档结果。
+
+  # 第三步：主爬虫汇总并写入
+  - id: merge_node
+    type: serial
+    role_id: crawler
+    timeout_seconds: 90
+    tools:
+      - ingest_message
+      - archive_summary
+    prompt: |
+      汇总上面两个子爬虫的局部归档结果，完成最终写入：
+      1. 调用 ingest_message 写入本轮 user 消息（role=user）
+      2. 调用 ingest_message 写入本轮 assistant 消息（role=assistant），保存返回 id
+      3. 将两个子爬虫的 summary 合并为完整摘要（200-600字）
+      4. 合并 tags（去重）
+      5. 调用 archive_summary 完成归档
+      完成后输出："并发归档完成（x2）"
