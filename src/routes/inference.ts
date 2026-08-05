@@ -16,9 +16,10 @@ const MEMCORE_BASE_URL = process.env.MEMCORE_BASE_URL || 'http://memcore-api.dev
 // 套餐速率（3秒滑动窗口）：
 //   free / personal  = 1 次
 //   developer        = 10 次
-//   enterprise / 0   = 不限
+//   enterprise       = 0（不限，fast-path）
 //
-// plan 来源：用 X-User-Token 解出的 memcoreToken 打 MemCore /user/me，带 Redis 缓存（60s）
+// plan 来源：用已验证的 memcoreToken 打 MemCore /user/me，带 Redis 缓存（60s）
+// userId 来源：buildMemcoreToken 内已经 jwt.verify 验签，可信；直接 verify memcoreToken 取 userId
 
 const PLAN_RATE_MAP: Record<string, number> = {
   free: 1,
@@ -26,7 +27,7 @@ const PLAN_RATE_MAP: Record<string, number> = {
   developer: 10,
   enterprise: 0,  // 0 = 不限
 };
-const PLAN_CACHE_TTL_S = 60;  // Redis 缓存 plan 60 秒
+const PLAN_CACHE_TTL_S = 60;
 
 const CRAWLER_RATE_LUA = `
   local key = KEYS[1]
@@ -40,12 +41,17 @@ const CRAWLER_RATE_LUA = `
     return -1
   end
   redis.call('zadd', key, now, member)
-  redis.call('expire', key, math.ceil(window / 1000) + 10)
+  -- 只在 key 首次写入时设 TTL，避免高频被限速用户的 key 被不断续期（内存泄漏）
+  if redis.call('ttl', key) == -1 then
+    redis.call('expire', key, math.ceil(window / 1000) + 10)
+  end
   return count + 1
 `;
 
-/** 从 MemCore /user/me 获取用户套餐（带 Redis 缓存） */
-async function getUserPlan(memcoreToken: string, userId: string): Promise<string> {
+/** 从 MemCore /user/me 获取用户套餐（带 Redis 缓存 60s）
+ *  查询失败时 fail-open：返回 null 表示"未知"，调用方会跳过限流
+ *  不降为 free，避免 MemCore 抖动时误限付费用户 */
+async function getUserPlan(memcoreToken: string, userId: string): Promise<string | null> {
   const cacheKey = `supermodel:plan_cache:${userId}`;
   try {
     const cached = await redisPub.get(cacheKey);
@@ -59,23 +65,26 @@ async function getUserPlan(memcoreToken: string, userId: string): Promise<string
     });
     if (resp.ok) {
       const body = await resp.json() as any;
-      const plan: string = body.plan ?? 'free';
+      // 规范化 plan：统一小写，防止 MemCore 返回 Enterprise/ENTERPRISE 误判
+      const plan: string = String(body.plan ?? 'free').toLowerCase();
       try {
         await redisPub.set(cacheKey, plan, 'EX', PLAN_CACHE_TTL_S);
       } catch { /* 缓存写入失败，忽略 */ }
       return plan;
     }
-  } catch { /* MemCore 查询失败，fail-open */ }
+  } catch { /* MemCore 查询失败 */ }
 
-  return 'free';
+  // fail-open：查询失败不降为 free（避免误限付费用户），返回 null 跳过限流
+  return null;
 }
 
-/** 按账号套餐限制爬虫调用频率，返回 false 表示已触发限流（reply 已发送 429） */
+/** 按账号套餐限制爬虫调用频率，返回 false 表示已发 429 */
 async function applyCrawlerRateLimit(
   userId: string,
   plan: string,
   reply: any
 ): Promise<boolean> {
+  // plan 规范化确保命中 PLAN_RATE_MAP；未知套餐 fallback 1（保守兜底）
   const limit = PLAN_RATE_MAP[plan] ?? 1;
   if (limit <= 0) return true;  // 0 = 不限速（企业版）
 
@@ -87,9 +96,9 @@ async function applyCrawlerRateLimit(
   try {
     const result = await redisPub.eval(
       CRAWLER_RATE_LUA,
-      1,       // numkeys
-      key,     // KEYS[1]
-      String(now), String(windowMs), String(limit), member  // ARGV[1..4]
+      1,
+      key,
+      String(now), String(windowMs), String(limit), member
     ) as number;
 
     if (result === -1) {
@@ -247,17 +256,25 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     // 只对携带 X-User-Token 的请求限速（MemCore 用户）。
     // 无 token 的匿名/内部调用跳过，由外层 API key 鉴权已保护。
     if (memcoreToken && userToken) {
-      // 从 JWT 解出 userId（避免重复打 MemCore 接口）
+      // 用 jwt.verify（验签）取 userId，而不是 jwt.decode（不验签）
+      // memcoreToken 由 buildMemcoreToken 内部验签后签出，此处再 verify 确保安全
       let userId: string | null = null;
       try {
-        const p = jwt.decode(memcoreToken) as any;
+        const p = jwt.verify(memcoreToken, MEMCORE_JWT_SECRET, {
+          issuer: 'memcore',
+          algorithms: ['HS256'],
+        }) as any;
         userId = p?.user_id ?? null;
-      } catch { /* ignore */ }
+      } catch { /* token 无效，跳过限流（上游鉴权已处理） */ }
 
       if (userId) {
         const plan = await getUserPlan(memcoreToken, userId);
-        const allowed = await applyCrawlerRateLimit(userId, plan, reply);
-        if (!allowed) return;  // 429 已发送
+        if (plan === null) {
+          // getUserPlan 查询失败，fail-open：放行，不误限付费用户
+        } else {
+          const allowed = await applyCrawlerRateLimit(userId, plan, reply);
+          if (!allowed) return;  // 429 已发送
+        }
       }
     }
     // ── End 爬虫调用频率限制 ─────────────────────────────────────────────────
