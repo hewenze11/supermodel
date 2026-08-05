@@ -1,3 +1,4 @@
+id: search_by_ids
 name: search_by_ids
 description: "根据 message_id 列表批量拉取记忆内容，供子爬虫处理"
 method: POST
