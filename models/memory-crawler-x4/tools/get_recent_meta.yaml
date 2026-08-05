@@ -1,3 +1,4 @@
+id: get_recent_meta
 name: get_recent_meta
 description: "获取最近记忆的元数据（只返回 id/tags/session_id/created_at，不返回全文，用于调度器分配任务）"
 method: POST
