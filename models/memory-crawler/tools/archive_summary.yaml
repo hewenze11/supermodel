@@ -1,6 +1,6 @@
 id: archive_summary
 name: "归档摘要"
-description: "归档本轮对话到记忆系统。传入 session_id，服务端自动将该 session 的所有消息归档为 L2 摘要。必须在两次 ingest_message 完成后调用。"
+description: "归档本轮对话：将 AI 生成的真实摘要和话题标签写入记忆系统（L2层）。必须在两次 ingest_message 完成后调用。summary 传入你生成的真实摘要内容，topics 传入话题标签数组。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/archive"
 method: POST
 timeout_seconds: 30
@@ -8,8 +8,16 @@ headers:
   Content-Type: "application/json"
 parameters:
   type: object
-  required: [session_id]
+  required: [session_id, summary, topics]
   properties:
     session_id:
       type: string
       description: "会话ID，与 ingest_message 传入的 session_id 一致"
+    summary:
+      type: string
+      description: "AI 生成的本轮对话摘要（100-500字，含核心内容+结论+重要实体+待办，纯文本不超过4000字符）"
+    topics:
+      type: array
+      items:
+        type: string
+      description: "话题标签数组（1-3个，每个不超过50字）"

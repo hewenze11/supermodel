@@ -1,0 +1,21 @@
+id: upsert_doc
+name: "新建或更新核心文档（幂等）"
+description: "新建或更新一条 L4 核心文档（用户长期事实/画像/偏好等）。接口按 (user_id, title) 做幂等 upsert：同名文档已存在则更新内容，不存在则新建。每个用户最多20个核心文档，每条内容不超过2000字节。调用前先用 list_docs 确认已有文档，避免用相近但不同的标题重复创建。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/docs"
+method: POST
+timeout_seconds: 15
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [title, content]
+  properties:
+    title:
+      type: string
+      description: "文档标题（唯一键），简短描述主题，如「用户职业背景」「用户技术偏好」「用户待办事项」"
+    content:
+      type: string
+      description: "文档内容（不超过2000字节），跨会话长期记忆"
+    trigger_desc:
+      type: string
+      description: "触发条件描述，告诉召回爬虫何时应召回此文档，如「当用户提到工作或职业时」"

@@ -1,0 +1,24 @@
+id: update_doc
+name: "更新核心文档"
+description: "更新已有的 L4 核心文档内容。当对话中出现与已有核心文档相关的新信息（职业变动、偏好更新、事实纠正等）时调用。doc_id 从 list_docs 的返回结果中获取。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/docs/{doc_id}"
+method: PUT
+timeout_seconds: 15
+headers:
+  Content-Type: "application/json"
+path_params:
+  doc_id:
+    type: string
+    description: "核心文档 UUID，从 list_docs 返回的 docs[].id 中获取"
+parameters:
+  type: object
+  properties:
+    title:
+      type: string
+      description: "新标题（可选，不传则保持原标题）"
+    content:
+      type: string
+      description: "新内容（不超过2000字节，会完整替换原内容）"
+    trigger_desc:
+      type: string
+      description: "新触发条件描述（可选）"
