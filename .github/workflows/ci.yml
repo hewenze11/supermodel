@@ -35,7 +35,6 @@ jobs:
         run: |
           mkdir -p /tmp/buildkit
           printf '[registry."172.236.254.239:30880"]\n  http = true\n  insecure = true\n' > /tmp/buildkit/buildkitd.toml
-          echo "=== buildkitd.toml ===" && cat /tmp/buildkit/buildkitd.toml
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,17 +42,15 @@ jobs:
           driver: docker-container
           buildkitd-config: /tmp/buildkit/buildkitd.toml
 
-      - name: Login to Harbor (manual auth for HTTP registry)
+      - name: Login to Harbor
         shell: bash
         run: |
           mkdir -p ~/.docker
           AUTH=$(echo -n "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" | base64 -w 0)
           printf '{"auths":{"172.236.254.239:30880":{"auth":"%s"}}}\n' "${AUTH}" > ~/.docker/config.json
-          echo "Docker config written."
-          curl -sf -u "${{ secrets.HARBOR_USERNAME }}:${{ secrets.HARBOR_PASSWORD }}" \
-            "http://172.236.254.239:30880/v2/" && echo "Harbor reachable OK" || echo "Harbor unreachable"
 
-      - name: Build and push dev
+      # ── dev 分支：构建测试镜像，更新 k8s/dev ──────────────────────────────
+      - name: Build and push dev image
         id: build_dev
         if: env.BRANCH_NAME == 'dev'
         uses: docker/build-push-action@v5
@@ -68,7 +65,23 @@ jobs:
           build-args: |
             NODE_ENV=development
 
-      - name: Build and push main (dev + prod tags)
+      - name: Update k8s/dev/deployment.yaml
+        if: env.BRANCH_NAME == 'dev' && steps.build_dev.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="k8s/dev/deployment.yaml"
+          NEW_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+          sed -i -E "s|image:.*${IMAGE_NAME}.*:dev-[a-z0-9]+|image: ${NEW_IMG}|g" "$FILE"
+          if git diff --quiet -- "$FILE"; then echo "No changes."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
+          git push origin HEAD:dev
+
+      # ── main 分支：构建生产镜像，更新 k8s/prod ───────────────────────────
+      - name: Build and push prod image
         id: build_prod
         if: env.BRANCH_NAME == 'main'
         uses: docker/build-push-action@v5
@@ -78,74 +91,33 @@ jobs:
           push: true
           provenance: false
           tags: |
-            172.236.254.239:30880/supermodel/supermodel:dev-${{ env.SHORT_SHA }}
-            172.236.254.239:30880/supermodel/supermodel:dev-latest
             172.236.254.239:30880/supermodel/supermodel:prod-${{ env.SHORT_SHA }}
             172.236.254.239:30880/supermodel/supermodel:prod-latest
           build-args: |
             NODE_ENV=production
 
-      - name: Update k8s/dev/deployment.yaml and push
-        if: env.BRANCH_NAME == 'dev' && steps.build_dev.outcome == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          FILE="k8s/dev/deployment.yaml"
-          NEW_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
-          sed -i -E "s#image:.*${IMAGE_NAME}.*:dev-[a-z0-9]+#image: ${NEW_IMG}#g" "$FILE"
-          git diff -- "$FILE" || true
-          if git diff --quiet -- "$FILE"; then
-            echo "No changes, skip commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$FILE"
-          git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
-          git push origin HEAD:dev
-
-      - name: Update k8s deployments from main branch
+      - name: Update k8s/prod/deployment.yaml
         if: env.BRANCH_NAME == 'main' && steps.build_prod.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
+          FILE="k8s/prod/deployment.yaml"
+          NEW_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:prod-${SHORT_SHA}"
+          sed -i -E "s|image:.*${IMAGE_NAME}.*:prod-[a-z0-9]+|image: ${NEW_IMG}|g" "$FILE"
+          if git diff --quiet -- "$FILE"; then echo "No changes."; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          CHANGED=0
-
-          # 更新 dev deployment（dev-xxx tag）
-          DEV_FILE="k8s/dev/deployment.yaml"
-          NEW_DEV_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
-          sed -i -E "s#image:.*${IMAGE_NAME}.*:(dev|prod)-[a-z0-9]+#image: ${NEW_DEV_IMG}#g" "$DEV_FILE"
-          if ! git diff --quiet -- "$DEV_FILE"; then
-            git add "$DEV_FILE"
-            CHANGED=1
-          fi
-
-          # 更新 prod deployment（prod-xxx tag）
-          PROD_FILE="k8s/prod/deployment.yaml"
-          NEW_PROD_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:prod-${SHORT_SHA}"
-          sed -i -E "s#image:.*${IMAGE_NAME}.*:(dev|prod)-[a-z0-9]+#image: ${NEW_PROD_IMG}#g" "$PROD_FILE"
-          if ! git diff --quiet -- "$PROD_FILE"; then
-            git add "$PROD_FILE"
-            CHANGED=1
-          fi
-
-          if [ "$CHANGED" -eq 0 ]; then
-            echo "No deployment changes, skip commit."
-            exit 0
-          fi
-          git commit -m "chore(ci): update deployments to ${SHORT_SHA} [skip ci]"
+          git add "$FILE"
+          git commit -m "chore(ci): update prod image to prod-${SHORT_SHA} [skip ci]"
           git push origin HEAD:main
 
       - name: Notify Feishu on success
-        if: (env.BRANCH_NAME == 'dev' && steps.build_dev.outcome == 'success') || (env.BRANCH_NAME == 'main' && steps.build_prod.outcome == 'success')
+        if: success()
         shell: bash
         run: |
           curl -sS -X POST "${FEISHU_WEBHOOK}" \
             -H 'Content-Type: application/json' \
-            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"✅ [SuperModel CI/CD] 构建成功\\n分支: ${BRANCH_NAME}\\nCommit: ${SHORT_SHA}\"}}"
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"✅ [SuperModel] ${BRANCH_NAME} build success | ${SHORT_SHA}\"}}"
 
       - name: Notify Feishu on failure
         if: failure()
@@ -153,4 +125,4 @@ jobs:
         run: |
           curl -sS -X POST "${FEISHU_WEBHOOK}" \
             -H 'Content-Type: application/json' \
-            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ [SuperModel CI/CD] 构建失败\\n分支: ${BRANCH_NAME}\\nCommit: ${SHORT_SHA}\\nRun: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}}"
+            -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"❌ [SuperModel] ${BRANCH_NAME} build failed | ${SHORT_SHA} | https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}}"
