@@ -111,6 +111,37 @@ async function applyCrawlerRateLimit(
   return true;
 }
 
+/**
+ * 从 MemCore 获取 workspace 的 user_system_prompt（带 Redis 缓存 60s）
+ * P1-2 修复：作为独立段注入，不拼进官方 system prompt
+ * fail-open：查询失败返回 null，不影响主流程
+ */
+async function getWorkspaceUserPrompt(memcoreToken: string, workspaceId?: string): Promise<string | null> {
+  if (!workspaceId) return null;
+  const cacheKey = `supermodel:ws_prompt:${workspaceId}`;
+  try {
+    const cached = await redisPub.get(cacheKey);
+    if (cached !== null) return cached === '' ? null : cached;
+  } catch { /* Redis 不可用，继续查 API */ }
+
+  try {
+    const resp = await fetch(`${MEMCORE_BASE_URL}/workspaces/${workspaceId}`, {
+      headers: { Authorization: `Bearer ${memcoreToken}` },
+      signal: AbortSignal.timeout(2000),
+    });
+    if (resp.ok) {
+      const body = await resp.json() as any;
+      const prompt: string | null = body.user_system_prompt ?? null;
+      try {
+        // 缓存 60s，空字符串表示"已查过但为空"
+        await redisPub.set(cacheKey, prompt ?? '', 'EX', 60);
+      } catch { /* 缓存写入失败，忽略 */ }
+      return prompt;
+    }
+  } catch { /* MemCore 查询失败，fail-open */ }
+  return null;
+}
+
 /** 从请求的 X-User-Token 解析用户 ID，生成 memcore-compatible JWT */
 function buildMemcoreToken(userToken: string | undefined): string | null {
   if (!userToken) return null;
@@ -299,6 +330,17 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       ).join('\n');
       const lastMsg = conversationMsgs[conversationMsgs.length - 1];
       initialInput += `Previous conversation:\n${history}\n\n[User]: ${lastMsg.content ?? ''}`;
+    }
+
+    // M17: 注入用户自定义提示词（P1-2 修复：作为独立段，不拼入官方 system prompt）
+    // 从 X-Workspace-ID 请求头获取 workspace_id
+    const workspaceId = req.headers['x-workspace-id'] as string | undefined;
+    if (memcoreToken && workspaceId) {
+      const userPrompt = await getWorkspaceUserPrompt(memcoreToken, workspaceId);
+      if (userPrompt) {
+        // 追加为独立的用户偏好段，明确标注不可覆盖系统行为
+        initialInput += `\n\n[User-Workspace-Instructions]\n${userPrompt}\n[/User-Workspace-Instructions]`;
+      }
     }
 
     const abortController = new AbortController();
