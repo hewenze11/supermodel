@@ -1,0 +1,27 @@
+# Ingress for SuperModel (dev) - sm-dev.memspider.com
+# TLS: cert-manager (letsencrypt-prod)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: memspider-sm-dev
+  namespace: dev-supermodel
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - sm-dev.memspider.com
+    secretName: memspider-sm-dev-tls
+  rules:
+  - host: sm-dev.memspider.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: supermodel-service-dev
+            port:
+              number: 11451
