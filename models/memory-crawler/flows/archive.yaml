@@ -21,9 +21,6 @@ nodes:
       2. 调用 get_tags 查看用户标签库
       3. 从对话中提取 user 消息内容，调用 ingest_message 写入（role=user）
       4. 从对话中提取 assistant 消息内容，调用 ingest_message 写入（role=assistant），保存返回的 id
-      5. 生成本轮对话摘要（100-500字，含核心内容+结论+重要实体）
-      6. 决定话题名称（参考已有话题，优先复用；连续对话共用话题）
-      7. 从标签库中选择合适的标签（没有合适的传空数组）
-      8. 调用 archive_summary 完成归档（传入步骤4的 assistant message id、摘要、话题名、标签）
+      5. 调用 archive_summary 完成归档（传入步骤3使用的 session_id 即可）
       
       完成后输出："归档完成"即可。

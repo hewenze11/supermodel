@@ -1,13 +1,12 @@
 id: search_by_topic
 name: "话题标签检索"
-description: "话题标签检索。话题明确时使用，或用户消息包含#标签时强制使用（标签名从#后提取）。传入 tags 参数（多个用英文逗号分隔），接口会返回命中话题下的记忆。"
-endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/topics/search"
+description: "按话题关键词检索用户已有话题列表。话题明确时使用，或用户消息包含#标签时强制使用（标签名从#后提取）。返回匹配话题的列表。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/topics"
 method: GET
 timeout_seconds: 10
 parameters:
   type: object
-  required: [tags]
   properties:
-    tags:
-      type: string
-      description: "标签名，多个用英文逗号分隔，大小写不敏感"
+    limit:
+      type: integer
+      description: "返回条数上限，默认20，最大100"

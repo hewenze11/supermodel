@@ -15,6 +15,7 @@ nodes:
       - recall_by_day
       - recall_by_time
       - search_by_topic
+      # semantic_search: endpoint /memory/semantic exists but currently returns empty (pgvector not enabled)
     prompt: |
       根据上面用户消息，执行记忆召回：
       1. 强制调用 get_recent 加载最近上下文（必须执行，不可跳过）

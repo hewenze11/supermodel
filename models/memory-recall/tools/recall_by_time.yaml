@@ -1,19 +1,22 @@
 id: recall_by_time
 name: "时间范围召回"
-description: "时间范围召回。用户明确提到某个时间段时使用。"
+description: "按时间范围召回记忆。用户明确提到某个时间段时使用。通过 query 描述时间范围，返回该时间段内的相关消息。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/recall"
-timeout_seconds: 10
+method: POST
+timeout_seconds: 15
 headers:
   Content-Type: "application/json"
 parameters:
   type: object
+  required: [query]
   properties:
-    time_from:
+    query:
       type: string
-      description: "起始时间，UTC ISO8601"
-    time_to:
+      description: "包含时间范围描述的查询，如 '2026年7月的对话' 或 '上周讨论的内容'"
+    mode:
       type: string
-      description: "结束时间，UTC ISO8601"
+      enum: [fast, refined, deep]
+      description: "检索深度，默认 fast"
     limit:
       type: integer
-      description: "返回上限，默认50"
+      description: "返回消息数上限，默认10，最大50"
