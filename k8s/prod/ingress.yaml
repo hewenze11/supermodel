@@ -1,0 +1,27 @@
+# Ingress for SuperModel (prod) - sm.memspider.com
+# TLS: cert-manager (letsencrypt-prod)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: memspider-sm-prod
+  namespace: supermodel
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - sm.memspider.com
+    secretName: memspider-sm-prod-tls
+  rules:
+  - host: sm.memspider.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: supermodel-service-prod
+            port:
+              number: 11451

@@ -13,9 +13,11 @@ spec:
       labels:
         app: supermodel-prod
     spec:
+      imagePullSecrets:
+        - name: harbor-secret
       containers:
       - name: supermodel
-        image: 172.236.254.239:30880/supermodel/supermodel:prod-latest
+        image: 172.236.254.239:30880/supermodel/supermodel:main-latest
         imagePullPolicy: Always
         ports:
         - containerPort: 11451
@@ -29,9 +31,40 @@ spec:
           value: "postgresql://postgres:PgProd12345@172.236.224.19:5432/supermodel_prod"
         - name: REDIS_URL
           value: "redis://:RedisProd12345@172.236.224.19:6379"
-        volumeMounts:
-        - name: supermodel-config
-          mountPath: /root/.supermodel
+        - name: MEMORY_API_BASE_URL
+          value: "http://memory-spider-api.memory-spider.svc.cluster.local:3001"
+        - name: MEMCORE_BASE_URL
+          value: "http://memcore-api.memcore.svc.cluster.local:3000"
+        - name: APIMART_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: supermodel-secrets
+              key: APIMART_API_KEY
+        - name: SUPERMODEL_API_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: supermodel-secrets
+              key: SUPERMODEL_API_KEYS
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 11451
+            httpHeaders:
+            - name: Authorization
+              value: "Bearer sm-memory-spider-prod-2026"
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 11451
+            httpHeaders:
+            - name: Authorization
+              value: "Bearer sm-memory-spider-prod-2026"
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          failureThreshold: 3
         resources:
           requests:
             memory: "512Mi"
@@ -39,25 +72,6 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 11451
-          initialDelaySeconds: 10
-          periodSeconds: 30
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 11451
-          initialDelaySeconds: 10
-          periodSeconds: 30
-          failureThreshold: 3
-      volumes:
-      - name: supermodel-config
-        hostPath:
-          path: /root/.supermodel
-          type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
@@ -77,19 +91,3 @@ spec:
       targetPort: 11435
       name: admin
   type: ClusterIP
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: supermodel-nodeport-prod
-  namespace: supermodel
-spec:
-  selector:
-    app: supermodel-prod
-  ports:
-    - protocol: TCP
-      port: 11451
-      targetPort: 11451
-      nodePort: 31004
-      name: inference
-  type: NodePort
