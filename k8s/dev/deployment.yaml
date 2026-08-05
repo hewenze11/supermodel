@@ -30,7 +30,9 @@ spec:
         - name: REDIS_URL
           value: "redis://:RedisTest12345@172.236.224.19:6380"
         - name: MEMORY_API_BASE_URL
-          value: "http://172.236.254.239:31012"
+          value: "http://memory-spider-api.dev-memory-spider.svc.cluster.local:3001"
+        - name: MEMCORE_BASE_URL
+          value: "http://memcore-api.dev-memcore.svc.cluster.local:3000"
         - name: APIMART_API_KEY
           valueFrom:
             secretKeyRef:
