@@ -4,8 +4,103 @@ import * as jwt from 'jsonwebtoken';
 import { ConfigRegistry, FlowConfig, RoleConfig } from '../config/types';
 import { FlowEngine } from '../engine/flow';
 import { SSEWriter } from '../sse/writer';
+import { redisPub } from '../redis';
 
 const MEMCORE_JWT_SECRET = process.env.MEMCORE_JWT_SECRET || 'memcore-dev-jwt-secret-2026';
+const MEMCORE_BASE_URL = process.env.MEMCORE_BASE_URL || 'http://memcore-api.dev-memcore.svc.cluster.local:3000';
+
+// ── 按账号套餐的爬虫调用频率限制 ─────────────────────────────────────────────
+// 限流点：SuperModel /v1/chat/completions（调一次 = 触发一次完整爬虫）
+// 软件层接口（/memory/semantic 等）对 SDK 直接开放，不在此限。
+//
+// 套餐速率（3秒滑动窗口）：
+//   free / personal  = 1 次
+//   developer        = 10 次
+//   enterprise / 0   = 不限
+//
+// plan 来源：用 X-User-Token 解出的 memcoreToken 打 MemCore /user/me，带 Redis 缓存（60s）
+
+const PLAN_RATE_MAP: Record<string, number> = {
+  free: 1,
+  personal: 1,
+  developer: 10,
+  enterprise: 0,  // 0 = 不限
+};
+const PLAN_CACHE_TTL_S = 60;  // Redis 缓存 plan 60 秒
+
+const CRAWLER_RATE_LUA = `
+  local key = KEYS[1]
+  local now = tonumber(ARGV[1])
+  local window = tonumber(ARGV[2])
+  local limit = tonumber(ARGV[3])
+  local member = ARGV[4]
+  redis.call('zremrangebyscore', key, 0, now - window)
+  local count = redis.call('zcard', key)
+  if count >= limit then
+    return -1
+  end
+  redis.call('zadd', key, now, member)
+  redis.call('expire', key, math.ceil(window / 1000) + 10)
+  return count + 1
+`;
+
+/** 从 MemCore /user/me 获取用户套餐（带 Redis 缓存） */
+async function getUserPlan(memcoreToken: string, userId: string): Promise<string> {
+  const cacheKey = `supermodel:plan_cache:${userId}`;
+  try {
+    const cached = await redisPub.get(cacheKey);
+    if (cached) return cached;
+  } catch { /* Redis 不可用，继续查 API */ }
+
+  try {
+    const resp = await fetch(`${MEMCORE_BASE_URL}/user/me`, {
+      headers: { Authorization: `Bearer ${memcoreToken}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (resp.ok) {
+      const body = await resp.json() as any;
+      const plan: string = body.plan ?? 'free';
+      try {
+        await redisPub.set(cacheKey, plan, 'EX', PLAN_CACHE_TTL_S);
+      } catch { /* 缓存写入失败，忽略 */ }
+      return plan;
+    }
+  } catch { /* MemCore 查询失败，fail-open */ }
+
+  return 'free';
+}
+
+/** 按账号套餐限制爬虫调用频率，返回 false 表示已触发限流（reply 已发送 429） */
+async function applyCrawlerRateLimit(
+  userId: string,
+  plan: string,
+  reply: any
+): Promise<boolean> {
+  const limit = PLAN_RATE_MAP[plan] ?? 1;
+  if (limit <= 0) return true;  // 0 = 不限速（企业版）
+
+  const key = `supermodel:crawler_rate:${userId}`;
+  const now = Date.now();
+  const windowMs = 3000;
+  const member = `${now}-${crypto.randomUUID()}`;
+
+  try {
+    const result = await redisPub.eval(
+      CRAWLER_RATE_LUA,
+      1,       // numkeys
+      key,     // KEYS[1]
+      String(now), String(windowMs), String(limit), member  // ARGV[1..4]
+    ) as number;
+
+    if (result === -1) {
+      reply.code(429).send({ error: { message: 'rate_limit_exceeded', retry_after_ms: windowMs } });
+      return false;
+    }
+  } catch {
+    // Redis 异常，fail-open：放行请求
+  }
+  return true;
+}
 
 /** 从请求的 X-User-Token 解析用户 ID，生成 memcore-compatible JWT */
 function buildMemcoreToken(userToken: string | undefined): string | null {
@@ -147,6 +242,25 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     const extraHeaders: Record<string, string> = memcoreToken
       ? { 'Authorization': `Bearer ${memcoreToken}` }
       : {};
+
+    // ── 爬虫调用频率限制（按账号套餐，3秒滑动窗口） ────────────────────────
+    // 只对携带 X-User-Token 的请求限速（MemCore 用户）。
+    // 无 token 的匿名/内部调用跳过，由外层 API key 鉴权已保护。
+    if (memcoreToken && userToken) {
+      // 从 JWT 解出 userId（避免重复打 MemCore 接口）
+      let userId: string | null = null;
+      try {
+        const p = jwt.decode(memcoreToken) as any;
+        userId = p?.user_id ?? null;
+      } catch { /* ignore */ }
+
+      if (userId) {
+        const plan = await getUserPlan(memcoreToken, userId);
+        const allowed = await applyCrawlerRateLimit(userId, plan, reply);
+        if (!allowed) return;  // 429 已发送
+      }
+    }
+    // ── End 爬虫调用频率限制 ─────────────────────────────────────────────────
 
     // Build initial input from messages — preserve conversation history per arch M6.4
     // Serialize all user/assistant turns as context, system msg prepended to initialInput
