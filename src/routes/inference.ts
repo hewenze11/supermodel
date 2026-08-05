@@ -333,12 +333,15 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     }
 
     // M17: 注入用户自定义提示词（P1-2 修复：作为独立段，不拼入官方 system prompt）
-    // 从 X-Workspace-ID 请求头获取 workspace_id
+    // 开发者通过 X-Workspace-Token 传入 workspace API Key，
+    // 通过 X-Workspace-ID 传入 workspace UUID，两者配合查询 user_system_prompt
     const workspaceId = req.headers['x-workspace-id'] as string | undefined;
-    if (memcoreToken && workspaceId) {
-      const userPrompt = await getWorkspaceUserPrompt(memcoreToken, workspaceId);
+    const workspaceApiKey = req.headers['x-workspace-token'] as string | undefined;
+    // 也兼容 memcoreToken（用户级 token），让后端用 user_id 路径验证
+    const promptToken = workspaceApiKey || memcoreToken;
+    if (promptToken && workspaceId) {
+      const userPrompt = await getWorkspaceUserPrompt(promptToken, workspaceId);
       if (userPrompt) {
-        // 追加为独立的用户偏好段，明确标注不可覆盖系统行为
         initialInput += `\n\n[User-Workspace-Instructions]\n${userPrompt}\n[/User-Workspace-Instructions]`;
       }
     }

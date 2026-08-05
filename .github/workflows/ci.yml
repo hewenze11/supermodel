@@ -68,7 +68,7 @@ jobs:
           build-args: |
             NODE_ENV=development
 
-      - name: Build and push prod
+      - name: Build and push main (dev + prod tags)
         id: build_prod
         if: env.BRANCH_NAME == 'main'
         uses: docker/build-push-action@v5
@@ -78,6 +78,8 @@ jobs:
           push: true
           provenance: false
           tags: |
+            172.236.254.239:30880/supermodel/supermodel:dev-${{ env.SHORT_SHA }}
+            172.236.254.239:30880/supermodel/supermodel:dev-latest
             172.236.254.239:30880/supermodel/supermodel:prod-${{ env.SHORT_SHA }}
             172.236.254.239:30880/supermodel/supermodel:prod-latest
           build-args: |
@@ -102,22 +104,39 @@ jobs:
           git commit -m "chore(ci): update dev image to dev-${SHORT_SHA} [skip ci]"
           git push origin HEAD:dev
 
-      - name: Update k8s/prod/deployment.yaml and push
+      - name: Update k8s deployments from main branch
         if: env.BRANCH_NAME == 'main' && steps.build_prod.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          FILE="k8s/prod/deployment.yaml"
-          NEW_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:prod-${SHORT_SHA}"
-          sed -i -E "s#image:.*${IMAGE_NAME}.*:prod-[a-z0-9]+#image: ${NEW_IMG}#g" "$FILE"
-          if git diff --quiet -- "$FILE"; then
-            echo "No changes, skip commit."
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$FILE"
-          git commit -m "chore(ci): update prod image to prod-${SHORT_SHA} [skip ci]"
+
+          CHANGED=0
+
+          # 更新 dev deployment（dev-xxx tag）
+          DEV_FILE="k8s/dev/deployment.yaml"
+          NEW_DEV_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:dev-${SHORT_SHA}"
+          sed -i -E "s#image:.*${IMAGE_NAME}.*:(dev|prod)-[a-z0-9]+#image: ${NEW_DEV_IMG}#g" "$DEV_FILE"
+          if ! git diff --quiet -- "$DEV_FILE"; then
+            git add "$DEV_FILE"
+            CHANGED=1
+          fi
+
+          # 更新 prod deployment（prod-xxx tag）
+          PROD_FILE="k8s/prod/deployment.yaml"
+          NEW_PROD_IMG="${REGISTRY}/${IMAGE_NAME}/${IMAGE_NAME}:prod-${SHORT_SHA}"
+          sed -i -E "s#image:.*${IMAGE_NAME}.*:(dev|prod)-[a-z0-9]+#image: ${NEW_PROD_IMG}#g" "$PROD_FILE"
+          if ! git diff --quiet -- "$PROD_FILE"; then
+            git add "$PROD_FILE"
+            CHANGED=1
+          fi
+
+          if [ "$CHANGED" -eq 0 ]; then
+            echo "No deployment changes, skip commit."
+            exit 0
+          fi
+          git commit -m "chore(ci): update deployments to ${SHORT_SHA} [skip ci]"
           git push origin HEAD:main
 
       - name: Notify Feishu on success
