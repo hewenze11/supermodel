@@ -65,6 +65,9 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 30
           failureThreshold: 3
+        volumeMounts:
+        - name: supermodel-config
+          mountPath: /home/supermodel/.supermodel
         resources:
           requests:
             memory: "512Mi"
@@ -72,6 +75,11 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
+      volumes:
+      - name: supermodel-config
+        hostPath:
+          path: /root/.supermodel
+          type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service
