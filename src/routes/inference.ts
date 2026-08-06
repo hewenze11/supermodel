@@ -283,6 +283,20 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       ? { 'Authorization': `Bearer ${memcoreToken}` }
       : {};
 
+    // M0 多租户：透传 x-workspace-id 给 MemCore，让 authResolution 使用正确的子 workspace
+    // 客户端每个实例对应一个独立 workspace，通过此 header 指定，MemCore 会校验归属关系
+    // 安全说明：MemCore 侧会用 ownerCheck 验证该 workspace 确属当前用户，这里只做格式校验
+    const rawWorkspaceId = req.headers['x-workspace-id'];
+    const workspaceIdHeader = Array.isArray(rawWorkspaceId) ? rawWorkspaceId[0] : rawWorkspaceId;
+    // UUID 格式校验，防止非法值透传
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const validWorkspaceId = workspaceIdHeader && UUID_RE.test(workspaceIdHeader.trim())
+      ? workspaceIdHeader.trim()
+      : undefined;
+    if (validWorkspaceId) {
+      extraHeaders['x-workspace-id'] = validWorkspaceId;  // 统一小写 key
+    }
+
     // ── 爬虫调用频率限制（按账号套餐，3秒滑动窗口） ────────────────────────
     // 只对携带 X-User-Token 的请求限速（MemCore 用户）。
     // 无 token 的匿名/内部调用跳过，由外层 API key 鉴权已保护。
@@ -332,17 +346,20 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       initialInput += `Previous conversation:\n${history}\n\n[User]: ${lastMsg.content ?? ''}`;
     }
 
-    // M17: 注入用户自定义提示词（P1-2 修复：作为独立段，不拼入官方 system prompt）
-    // 开发者通过 X-Workspace-Token 传入 workspace API Key，
-    // 通过 X-Workspace-ID 传入 workspace UUID，两者配合查询 user_system_prompt
-    const workspaceId = req.headers['x-workspace-id'] as string | undefined;
+    // M17: 注入用户自定义提示词（作为独立段，不拼入官方 system prompt）
+    // 使用 validWorkspaceId（已格式校验），避免注入非法值
+    // 鉴权说明：promptToken 使用用户级 memcoreToken，MemCore 侧会校验 workspace 归属
     const workspaceApiKey = req.headers['x-workspace-token'] as string | undefined;
-    // 也兼容 memcoreToken（用户级 token），让后端用 user_id 路径验证
     const promptToken = workspaceApiKey || memcoreToken;
-    if (promptToken && workspaceId) {
-      const userPrompt = await getWorkspaceUserPrompt(promptToken, workspaceId);
+    if (promptToken && validWorkspaceId) {
+      const userPrompt = await getWorkspaceUserPrompt(promptToken, validWorkspaceId);
       if (userPrompt) {
-        initialInput += `\n\n[User-Workspace-Instructions]\n${userPrompt}\n[/User-Workspace-Instructions]`;
+        // 防止提示词标签逃逸：转义闭合标签，防止用户 prompt 中包含 [/User-Workspace-Instructions] 闭合标签
+        // 转义开标签和闭标签，防止提示词协议注入/逃逸
+        const safePrompt = userPrompt
+          .replace(/\[User-Workspace-Instructions\]/gi, '[User-Workspace-Instructions\\]')
+          .replace(/\[\/User-Workspace-Instructions\]/gi, '[/User-Workspace-Instructions\\]');
+        initialInput += `\n\n[User-Workspace-Instructions]\n${safePrompt}\n[/User-Workspace-Instructions]`;
       }
     }
 
