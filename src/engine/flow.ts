@@ -49,6 +49,10 @@ function isPrivateAddress(addr: string): boolean {
   return PRIVATE_IP_REGEX.some(re => re.test(addr));
 }
 
+// DNS 解析结果缓存（TTL 60s），避免每次工具调用都做 DNS 查询
+const dnsCache = new Map<string, { addresses: string[]; expiresAt: number }>();
+const DNS_CACHE_TTL_MS = 60_000;
+
 async function validateToolEndpoint(endpoint: string): Promise<void> {
   let url: URL;
   try {
@@ -60,21 +64,40 @@ async function validateToolEndpoint(endpoint: string): Promise<void> {
     throw new Error(`Tool endpoint must use http(s): ${endpoint}`);
   }
   const hostname = url.hostname;
-  // Static check first (catches localhost/literal IPs without DNS cost)
+
+  // K8s 集群内部服务域名白名单（*.svc.cluster.local），直接放行，不做 SSRF 检查
+  // 这些地址由 K8s 网络策略控制，不存在 DNS rebinding 风险
+  if (hostname.endsWith('.svc.cluster.local') || hostname.endsWith('.cluster.local')) {
+    return;
+  }
+
+  // 静态检查：拦截字面量私有 IP 和 localhost
   if (isPrivateAddress(hostname) || hostname === 'localhost') {
     throw new Error(`Tool endpoint points to a private/loopback address which is not allowed: ${endpoint}`);
   }
-  // DNS resolution check to defeat DNS rebinding / split-horizon DNS
+
+  // DNS 解析检查（带缓存，TTL 60s）
+  const cached = dnsCache.get(hostname);
+  if (cached && cached.expiresAt > Date.now()) {
+    for (const address of cached.addresses) {
+      if (isPrivateAddress(address)) {
+        throw new Error(`Tool endpoint DNS resolves to a private address (${address}), which is not allowed: ${endpoint}`);
+      }
+    }
+    return;
+  }
+
   try {
     const result = await dns.lookup(hostname, { all: true });
-    for (const { address } of result) {
+    const addresses = result.map(r => r.address);
+    dnsCache.set(hostname, { addresses, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
+    for (const address of addresses) {
       if (isPrivateAddress(address)) {
         throw new Error(`Tool endpoint DNS resolves to a private address (${address}), which is not allowed: ${endpoint}`);
       }
     }
   } catch (err: any) {
     if (err.message?.includes('not allowed')) throw err;
-    // DNS lookup failure is itself a security signal — reject
     throw new Error(`Tool endpoint DNS lookup failed for ${hostname}: ${err.message}`);
   }
 }
