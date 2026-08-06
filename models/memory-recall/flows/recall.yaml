@@ -1,7 +1,7 @@
 id: recall
 description: "召回流程：对话前执行，从记忆系统召回相关记忆注入上下文"
 output_node: recall_node
-max_rounds: 3
+max_rounds: 1
 timeout_seconds: 30
 
 nodes:
