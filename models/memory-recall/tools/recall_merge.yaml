@@ -1,0 +1,18 @@
+id: recall_merge
+name: "多维记忆检索"
+description: "一次调用，并行执行全文检索+向量语义+话题标签+近期对话四路检索，RRF合并去重后返回最相关的记忆片段数组。只需调用一次，禁止重复调用。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/recall-merge"
+method: POST
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+parameters:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "从用户消息中提取的搜索关键词，用于多维检索"
+    top_k:
+      type: integer
+      description: "返回条数上限，默认20，最大50"
