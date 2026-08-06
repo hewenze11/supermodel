@@ -398,6 +398,20 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     // 通过 X-Workspace-ID 传入 workspace UUID，两者配合查询 user_system_prompt
     const workspaceId = req.headers['x-workspace-id'] as string | undefined;
     const workspaceApiKey = req.headers['x-workspace-token'] as string | undefined;
+
+    // ── L_cache：活跃记忆缓存注入 ────────────────────────────────────────────
+    // 上一次深度召回结果缓存在 Redis（TTL 15min），本轮直接注入，避免重复触发深度召回
+    if (workspaceId) {
+      try {
+        const lcacheKey = `supermodel:active_recall:${workspaceId}`;
+        const lcached = await redisPub.get(lcacheKey);
+        if (lcached) {
+          const truncated = lcached.length > 4000 ? lcached.slice(0, 4000) + '\n…（记忆截断）' : lcached;
+          initialInput = `${initialInput}\n\n[上次深度召回的相关记忆 L_cache]\n${truncated}`;
+        }
+      } catch { /* Redis 不可用，跳过 */ }
+    }
+    // ── End L_cache 注入 ──────────────────────────────────────────────────────
     // 也兼容 memcoreToken（用户级 token），让后端用 user_id 路径验证
     const promptToken = workspaceApiKey || memcoreToken;
     if (promptToken && workspaceId) {
@@ -439,6 +453,14 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           }
           await sseWriter.writeChunk(chunk);
         }
+        // ── L_cache 写入（streaming）──────────────────────────────────────────────
+        if (workspaceId && flowResult?.output && !flowResult.output.includes('本轮无需深度召回')) {
+          const rm = flowResult.output.match(/【检索到的相关记忆】\n([\s\S]*?)(?:\n---|$)/);
+          if (rm && rm[1].trim() && rm[1].trim() !== '暂无') {
+            redisPub.set(`supermodel:active_recall:${workspaceId}`, rm[1].trim(), 'EX', 900).catch(() => {});
+          }
+        }
+        // ── End L_cache 写入 ─────────────────────────────────────────────────────
         // Build final chunk with usage + finish_reason + x_supermodel_usage per arch M5
         const usageSummary = flowResult ? {
           prompt_tokens: flowResult.totalUsage?.prompt_tokens ?? 0,
@@ -475,6 +497,14 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     // Non-streaming
     try {
       const result = await flowEngine.executeFlow(flowConfig, roles, tools, initialInput, instanceName, abortController, extraHeaders);
+      // ── L_cache 写入（non-streaming）────────────────────────────────────────
+      if (workspaceId && result.output && !result.output.includes('本轮无需深度召回')) {
+        const rm = result.output.match(/【检索到的相关记忆】\n([\s\S]*?)(?:\n---|$)/);
+        if (rm && rm[1].trim() && rm[1].trim() !== '暂无') {
+          redisPub.set(`supermodel:active_recall:${workspaceId}`, rm[1].trim(), 'EX', 900).catch(() => {});
+        }
+      }
+      // ── End L_cache 写入 ─────────────────────────────────────────────────────
       return {
         id: `chatcmpl-${result.id}`,
         object: 'chat.completion',
