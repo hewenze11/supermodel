@@ -17,7 +17,7 @@ spec:
         - name: harbor-secret
       containers:
       - name: supermodel
-        image: 172.236.254.239:30880/supermodel/supermodel:prod-6f78fe4
+        image: 172.236.254.239:30880/supermodel/supermodel:prod-bc96271
         imagePullPolicy: Always
         ports:
         - containerPort: 11451
