@@ -205,12 +205,21 @@ function authenticateInference(req: any, reply: any, apiKeys: string[]): boolean
 }
 
 // Resolve model field to (instanceName, flowConfig, roles, tools)
+// SDK 友好别名映射：文档里写的简短名 → 实际 instance/flow 路径
+const MODEL_ALIASES: Record<string, string> = {
+  'memory-recall':  'memory-recall/recall',
+  'memory-archive': 'memory-archiver/archive_external',
+}
+
 function resolveModel(model: string, registry: ConfigRegistry): {
   instanceName: string;
   flowConfig: FlowConfig;
   roles: Map<string, RoleConfig>;
   tools: Map<string, import('../config/types').ToolConfig>;
 } | null {
+  // 别名解析：将 SDK 文档中的简短名映射到实际 instance/flow 路径
+  if (MODEL_ALIASES[model]) model = MODEL_ALIASES[model];
+
   // Check instances map - need to work with LoadedInstances
   // Registry.instances is ModelConfig[] (legacy bridge)
   // We walk the instances to find the right flow
