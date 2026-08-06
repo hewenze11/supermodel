@@ -421,6 +421,12 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       }
     }
 
+    // ── 请求入口日志（带 workspace/user 标记，便于多用户分析）──────────────
+    const reqWs = workspaceId ?? 'no-ws';
+    const reqUser = (memcoreToken ? (() => { try { return (require('jsonwebtoken').decode(memcoreToken) as any)?.user_id ?? 'unknown'; } catch { return 'unknown'; } })() : 'anon');
+    console.log(`[recall-req] ws=${reqWs} user=${reqUser} model=${model}`);
+    // ── End 请求入口日志 ────────────────────────────────────────────────────────
+
     const abortController = new AbortController();
     req.raw.on('close', () => abortController.abort());
 
