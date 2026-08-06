@@ -341,6 +341,58 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       initialInput += `Previous conversation:\n${history}\n\n[User]: ${lastMsg.content ?? ''}`;
     }
 
+    // ── memory-recall 预注入：L4 核心文档 + 近期 L1/L2（仅对 recall flow 生效）─────
+    // 在 recall flow 执行前，从 memcore 拉取结构化记忆注入 initialInput
+    // 这样爬虫一上来就有完整语境，只需一次 recall_merge 工具调用即可
+    if (instanceName === 'memory-recall' && memcoreToken) {
+      try {
+        const recentRes = await fetch(
+          `${MEMCORE_BASE_URL}/memory/recent?limit_raw=15&limit_summary=10`,
+          { headers: { Authorization: `Bearer ${memcoreToken}` }, signal: AbortSignal.timeout(5000) }
+        )
+        if (recentRes.ok) {
+          const recentData = await recentRes.json() as any
+          const msgs: any[] = recentData.messages ?? []
+          const sums: any[] = recentData.summaries ?? []
+          const coreDocs: any[] = recentData.core_docs ?? []
+
+          // L4 核心文档
+          let injectBlock = ''
+          if (coreDocs.length > 0) {
+            injectBlock += `[L4 核心文档]\n`
+            coreDocs.forEach((d: any) => {
+              injectBlock += `### ${d.title ?? '文档'}\n${d.content ?? ''}\n\n`
+            })
+          }
+
+          // 最近 5 轮 L1 原始对话（按时间正序）
+          const l1 = msgs.slice(0, 5).reverse()
+          if (l1.length > 0) {
+            injectBlock += `[最近 ${l1.length} 轮原始对话 L1]\n`
+            l1.forEach((m: any) => {
+              injectBlock += `[${m.role}] ${m.content}\n`
+            })
+            injectBlock += '\n'
+          }
+
+          // 第 6-15 轮摘要 L2（summaries 按时间倒序，取前 10 条）
+          const l2 = sums.slice(0, 10).reverse()
+          if (l2.length > 0) {
+            injectBlock += `[第 6-15 轮摘要 L2]\n`
+            l2.forEach((s: any) => {
+              injectBlock += `- ${s.content ?? ''}\n`
+            })
+            injectBlock += '\n'
+          }
+
+          if (injectBlock) {
+            initialInput = `${injectBlock}\n[用户当前消息]\n${initialInput}`
+          }
+        }
+      } catch { /* 预注入失败，降级继续，不影响主流程 */ }
+    }
+    // ── End memory-recall 预注入 ─────────────────────────────────────────────
+
     // M17: 注入用户自定义提示词（P1-2 修复：作为独立段，不拼入官方 system prompt）
     // 开发者通过 X-Workspace-Token 传入 workspace API Key，
     // 通过 X-Workspace-ID 传入 workspace UUID，两者配合查询 user_system_prompt
