@@ -205,12 +205,21 @@ function authenticateInference(req: any, reply: any, apiKeys: string[]): boolean
 }
 
 // Resolve model field to (instanceName, flowConfig, roles, tools)
+// SDK 友好别名映射：文档里写的简短名 → 实际 instance/flow 路径
+const MODEL_ALIASES: Record<string, string> = {
+  'memory-recall':  'memory-recall/recall',
+  'memory-archive': 'memory-archiver/archive_external',
+}
+
 function resolveModel(model: string, registry: ConfigRegistry): {
   instanceName: string;
   flowConfig: FlowConfig;
   roles: Map<string, RoleConfig>;
   tools: Map<string, import('../config/types').ToolConfig>;
 } | null {
+  // 别名解析：将 SDK 文档中的简短名映射到实际 instance/flow 路径
+  if (MODEL_ALIASES[model]) model = MODEL_ALIASES[model];
+
   // Check instances map - need to work with LoadedInstances
   // Registry.instances is ModelConfig[] (legacy bridge)
   // We walk the instances to find the right flow
@@ -283,20 +292,6 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       ? { 'Authorization': `Bearer ${memcoreToken}` }
       : {};
 
-    // M0 多租户：透传 x-workspace-id 给 MemCore，让 authResolution 使用正确的子 workspace
-    // 客户端每个实例对应一个独立 workspace，通过此 header 指定，MemCore 会校验归属关系
-    // 安全说明：MemCore 侧会用 ownerCheck 验证该 workspace 确属当前用户，这里只做格式校验
-    const rawWorkspaceId = req.headers['x-workspace-id'];
-    const workspaceIdHeader = Array.isArray(rawWorkspaceId) ? rawWorkspaceId[0] : rawWorkspaceId;
-    // UUID 格式校验，防止非法值透传
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const validWorkspaceId = workspaceIdHeader && UUID_RE.test(workspaceIdHeader.trim())
-      ? workspaceIdHeader.trim()
-      : undefined;
-    if (validWorkspaceId) {
-      extraHeaders['x-workspace-id'] = validWorkspaceId;  // 统一小写 key
-    }
-
     // ── 爬虫调用频率限制（按账号套餐，3秒滑动窗口） ────────────────────────
     // 只对携带 X-User-Token 的请求限速（MemCore 用户）。
     // 无 token 的匿名/内部调用跳过，由外层 API key 鉴权已保护。
@@ -346,20 +341,83 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
       initialInput += `Previous conversation:\n${history}\n\n[User]: ${lastMsg.content ?? ''}`;
     }
 
-    // M17: 注入用户自定义提示词（作为独立段，不拼入官方 system prompt）
-    // 使用 validWorkspaceId（已格式校验），避免注入非法值
-    // 鉴权说明：promptToken 使用用户级 memcoreToken，MemCore 侧会校验 workspace 归属
+    // ── memory-recall 预注入：L4 核心文档 + 近期 L1/L2（仅对 recall flow 生效）─────
+    // 在 recall flow 执行前，从 memcore 拉取结构化记忆注入 initialInput
+    // 这样爬虫一上来就有完整语境，只需一次 recall_merge 工具调用即可
+    if (instanceName === 'memory-recall' && memcoreToken) {
+      try {
+        const recentRes = await fetch(
+          `${MEMCORE_BASE_URL}/memory/recent?limit_raw=15&limit_summary=10`,
+          { headers: { Authorization: `Bearer ${memcoreToken}` }, signal: AbortSignal.timeout(5000) }
+        )
+        if (recentRes.ok) {
+          const recentData = await recentRes.json() as any
+          const msgs: any[] = recentData.messages ?? []
+          const sums: any[] = recentData.summaries ?? []
+          const coreDocs: any[] = recentData.core_docs ?? []
+
+          // L4 核心文档
+          let injectBlock = ''
+          if (coreDocs.length > 0) {
+            injectBlock += `[L4 核心文档]\n`
+            coreDocs.forEach((d: any) => {
+              injectBlock += `### ${d.title ?? '文档'}\n${d.content ?? ''}\n\n`
+            })
+          }
+
+          // 最近 5 轮 L1 原始对话（按时间正序）
+          const l1 = msgs.slice(0, 5).reverse()
+          if (l1.length > 0) {
+            injectBlock += `[最近 ${l1.length} 轮原始对话 L1]\n`
+            l1.forEach((m: any) => {
+              injectBlock += `[${m.role}] ${m.content}\n`
+            })
+            injectBlock += '\n'
+          }
+
+          // 第 6-15 轮摘要 L2（summaries 按时间倒序，取前 10 条）
+          const l2 = sums.slice(0, 10).reverse()
+          if (l2.length > 0) {
+            injectBlock += `[第 6-15 轮摘要 L2]\n`
+            l2.forEach((s: any) => {
+              injectBlock += `- ${s.content ?? ''}\n`
+            })
+            injectBlock += '\n'
+          }
+
+          if (injectBlock) {
+            initialInput = `${injectBlock}\n[用户当前消息]\n${initialInput}`
+          }
+        }
+      } catch { /* 预注入失败，降级继续，不影响主流程 */ }
+    }
+    // ── End memory-recall 预注入 ─────────────────────────────────────────────
+
+    // M17: 注入用户自定义提示词（P1-2 修复：作为独立段，不拼入官方 system prompt）
+    // 开发者通过 X-Workspace-Token 传入 workspace API Key，
+    // 通过 X-Workspace-ID 传入 workspace UUID，两者配合查询 user_system_prompt
+    const workspaceId = req.headers['x-workspace-id'] as string | undefined;
     const workspaceApiKey = req.headers['x-workspace-token'] as string | undefined;
+
+    // ── L_cache：活跃记忆缓存注入 ────────────────────────────────────────────
+    // 上一次深度召回结果缓存在 Redis（TTL 15min），本轮直接注入，避免重复触发深度召回
+    if (workspaceId) {
+      try {
+        const lcacheKey = `supermodel:active_recall:${workspaceId}`;
+        const lcached = await redisPub.get(lcacheKey);
+        if (lcached) {
+          const truncated = lcached.length > 4000 ? lcached.slice(0, 4000) + '\n…（记忆截断）' : lcached;
+          initialInput = `${initialInput}\n\n[上次深度召回的相关记忆 L_cache]\n${truncated}`;
+        }
+      } catch { /* Redis 不可用，跳过 */ }
+    }
+    // ── End L_cache 注入 ──────────────────────────────────────────────────────
+    // 也兼容 memcoreToken（用户级 token），让后端用 user_id 路径验证
     const promptToken = workspaceApiKey || memcoreToken;
-    if (promptToken && validWorkspaceId) {
-      const userPrompt = await getWorkspaceUserPrompt(promptToken, validWorkspaceId);
+    if (promptToken && workspaceId) {
+      const userPrompt = await getWorkspaceUserPrompt(promptToken, workspaceId);
       if (userPrompt) {
-        // 防止提示词标签逃逸：转义闭合标签，防止用户 prompt 中包含 [/User-Workspace-Instructions] 闭合标签
-        // 转义开标签和闭标签，防止提示词协议注入/逃逸
-        const safePrompt = userPrompt
-          .replace(/\[User-Workspace-Instructions\]/gi, '[User-Workspace-Instructions\\]')
-          .replace(/\[\/User-Workspace-Instructions\]/gi, '[/User-Workspace-Instructions\\]');
-        initialInput += `\n\n[User-Workspace-Instructions]\n${safePrompt}\n[/User-Workspace-Instructions]`;
+        initialInput += `\n\n[User-Workspace-Instructions]\n${userPrompt}\n[/User-Workspace-Instructions]`;
       }
     }
 
@@ -395,6 +453,14 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           }
           await sseWriter.writeChunk(chunk);
         }
+        // ── L_cache 写入（streaming）──────────────────────────────────────────────
+        if (workspaceId && flowResult?.output && !flowResult.output.includes('本轮无需深度召回')) {
+          const rm = flowResult.output.match(/【检索到的相关记忆】\n([\s\S]*?)(?:\n---|$)/);
+          if (rm && rm[1].trim() && rm[1].trim() !== '暂无') {
+            redisPub.set(`supermodel:active_recall:${workspaceId}`, rm[1].trim(), 'EX', 900).catch(() => {});
+          }
+        }
+        // ── End L_cache 写入 ─────────────────────────────────────────────────────
         // Build final chunk with usage + finish_reason + x_supermodel_usage per arch M5
         const usageSummary = flowResult ? {
           prompt_tokens: flowResult.totalUsage?.prompt_tokens ?? 0,
@@ -431,6 +497,14 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     // Non-streaming
     try {
       const result = await flowEngine.executeFlow(flowConfig, roles, tools, initialInput, instanceName, abortController, extraHeaders);
+      // ── L_cache 写入（non-streaming）────────────────────────────────────────
+      if (workspaceId && result.output && !result.output.includes('本轮无需深度召回')) {
+        const rm = result.output.match(/【检索到的相关记忆】\n([\s\S]*?)(?:\n---|$)/);
+        if (rm && rm[1].trim() && rm[1].trim() !== '暂无') {
+          redisPub.set(`supermodel:active_recall:${workspaceId}`, rm[1].trim(), 'EX', 900).catch(() => {});
+        }
+      }
+      // ── End L_cache 写入 ─────────────────────────────────────────────────────
       return {
         id: `chatcmpl-${result.id}`,
         object: 'chat.completion',
