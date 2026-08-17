@@ -467,6 +467,21 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
           }
         }
         // ── End L_cache 写入 ─────────────────────────────────────────────────────
+        // ── 自动创建 stage（记录字节数统计）────────────────────────────────────────
+        if (memcoreToken && instanceName === 'memory-recall' && flowResult?.output) {
+          const rawBytes = Buffer.byteLength(initialInput, 'utf8');
+          const recalledBytes = Buffer.byteLength(flowResult.output, 'utf8');
+          fetch(`${MEMCORE_BASE_URL}/memory/context/stage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memcoreToken}` },
+            body: JSON.stringify({
+              steps: [], sources: [], summary: flowResult.output.slice(0, 4000),
+              raw_bytes: rawBytes, recalled_bytes: recalledBytes,
+            }),
+            signal: AbortSignal.timeout(3000),
+          }).catch(() => {});
+        }
+        // ── End 自动创建 stage ───────────────────────────────────────────────────
         // Build final chunk with usage + finish_reason + x_supermodel_usage per arch M5
         const usageSummary = flowResult ? {
           prompt_tokens: flowResult.totalUsage?.prompt_tokens ?? 0,
@@ -511,6 +526,21 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
         }
       }
       // ── End L_cache 写入 ─────────────────────────────────────────────────────
+      // ── 自动创建 stage（non-streaming）──────────────────────────────────────────
+      if (memcoreToken && instanceName === 'memory-recall' && result.output) {
+        const rawBytes = Buffer.byteLength(initialInput, 'utf8');
+        const recalledBytes = Buffer.byteLength(result.output, 'utf8');
+        fetch(`${MEMCORE_BASE_URL}/memory/context/stage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${memcoreToken}` },
+          body: JSON.stringify({
+            steps: [], sources: [], summary: result.output.slice(0, 4000),
+            raw_bytes: rawBytes, recalled_bytes: recalledBytes,
+          }),
+          signal: AbortSignal.timeout(3000),
+        }).catch(() => {});
+      }
+      // ── End 自动创建 stage ───────────────────────────────────────────────────
       return {
         id: `chatcmpl-${result.id}`,
         object: 'chat.completion',
