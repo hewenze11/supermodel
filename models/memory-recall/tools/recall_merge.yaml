@@ -1,0 +1,28 @@
+id: recall_merge
+name: "多维记忆检索"
+description: "一次调用，并行执行全文检索+向量语义+话题标签+近期对话四路检索，RRF合并去重后返回最相关的记忆片段数组。只需调用一次，禁止重复调用。"
+endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/recall-merge"
+method: POST
+timeout_seconds: 10
+headers:
+  Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
+parameters:
+  type: object
+  required: [query]
+  properties:
+    query:
+      type: string
+      description: "从用户消息中提取的 1-3 个核心关键词，空格分隔。例：'蓝莓 健康 饮食习惯'"
+    top_k:
+      type: integer
+      description: "返回条数上限，默认20，最大50"
+examples:
+  - description: "用户提到具体事物"
+    call: {"query": "蓝莓 每天晚上", "top_k": 20}
+  - description: "用户询问项目进展"
+    call: {"query": "Memory Spider SDK 接口", "top_k": 20}
+  - description: "用户问自己说过什么"
+    call: {"query": "用户偏好 习惯", "top_k": 15}
+  - description: "通用对话，无明确主题"
+    call: {"query": "最近对话", "top_k": 10}
