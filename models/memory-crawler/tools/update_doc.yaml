@@ -6,6 +6,7 @@ method: PUT
 timeout_seconds: 15
 headers:
   Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 path_params:
   doc_id:
     type: string
