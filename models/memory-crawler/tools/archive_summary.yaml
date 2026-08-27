@@ -6,6 +6,7 @@ method: POST
 timeout_seconds: 30
 headers:
   Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 parameters:
   type: object
   required: [session_id, summary, topics]
