@@ -121,7 +121,7 @@ export class ConfigLoader {
           const rolePath = path.join(rolesDir, file);
           const rawRoleConfig = fs.readFileSync(rolePath, 'utf8')
             .replace(/\$\{([^}]+)\}/g, (_, varName) => process.env[varName] ?? '');
-          const roleConfig: RoleConfig = yaml.load(rawRoleConfig) as RoleConfig;
+          const roleConfig: RoleConfig = yaml.load(expandEnv(rawRoleConfig)) as RoleConfig;
           
           // Validate required fields for RoleConfig according to architecture
           if (!roleConfig.id) {
