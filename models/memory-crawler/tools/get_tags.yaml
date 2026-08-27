@@ -2,6 +2,9 @@ id: get_tags
 name: "获取标签库"
 description: "获取用户的全部自定义标签库。归档前必须调用，确认可用的标签名称，只能从返回结果中选标签。不需要传任何参数。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/tags"
+headers:
+  Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 method: GET
 timeout_seconds: 10
 parameters:
