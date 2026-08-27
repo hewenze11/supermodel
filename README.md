@@ -327,3 +327,4 @@ curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/u
 
 MIT
 <!-- dev rebuild 20260827-0942 -->
+<!-- rebuild-dev 20260827-1013 -->
