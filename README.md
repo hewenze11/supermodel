@@ -326,3 +326,4 @@ curl -fsSL https://raw.githubusercontent.com/hewenze11/supermodel/main/scripts/u
 ## License
 
 MIT
+<!-- dev rebuild 20260827-0942 -->
