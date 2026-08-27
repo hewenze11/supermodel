@@ -16,6 +16,12 @@ import {
   NodeConfig
 } from './types';
 
+
+// Expand environment variable placeholders like ${VAR_NAME} in a string
+function expandEnv(s: string): string {
+  return s.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? '');
+}
+
 const CONFIG_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '', '.supermodel');
 
 export class ConfigLoader {
