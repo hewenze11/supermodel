@@ -5,6 +5,7 @@ endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/summariz
 timeout_seconds: 30
 headers:
   Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 parameters:
   type: object
   required: [message_id, summary, topic_name]
