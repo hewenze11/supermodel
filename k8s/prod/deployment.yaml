@@ -40,6 +40,11 @@ spec:
             secretKeyRef:
               name: supermodel-secrets
               key: APIMART_API_KEY
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: supermodel-secrets
+              key: OPENROUTER_API_KEY
         - name: SUPERMODEL_API_KEYS
           valueFrom:
             secretKeyRef:
