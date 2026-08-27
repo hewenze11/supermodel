@@ -2,6 +2,9 @@ id: list_docs
 name: "获取核心文档列表"
 description: "获取用户的全部 L4 核心文档（用户画像、长期事实等）。归档前调用，判断是否需要新建或更新已有文档。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/docs"
+headers:
+  Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 method: GET
 timeout_seconds: 10
 parameters:
