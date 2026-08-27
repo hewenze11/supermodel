@@ -2,6 +2,9 @@ id: list_topics
 name: "获取话题列表"
 description: "获取用户已有的话题列表。归档前调用，优先复用已有话题，避免重复创建相似话题。不需要传任何参数。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/topics/list"
+headers:
+  Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 method: GET
 timeout_seconds: 10
 parameters:
