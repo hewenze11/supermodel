@@ -1,9 +1,9 @@
 id: archiver
 primary: true
 provider_type: openai
-base_url: "https://api.apimart.ai/v1"
-api_key: "${APIMART_API_KEY}"
-provider_model: "deepseek-v3.2"
+base_url: "https://openrouter.ai/api/v1"
+api_key: "${OPENROUTER_API_KEY}"
+provider_model: "deepseek/deepseek-chat-v3-5:free"
 temperature: 0.3
 max_tokens: 2048
 system_prompt_extra: |
