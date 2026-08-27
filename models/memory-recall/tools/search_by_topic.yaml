@@ -2,6 +2,9 @@ id: search_by_topic
 name: "话题标签检索"
 description: "按话题关键词检索用户已有话题列表。话题明确时使用，或用户消息包含#标签时强制使用（标签名从#后提取）。返回匹配话题的列表。"
 endpoint: "http://memcore-api.dev-memcore.svc.cluster.local:3000/memory/topics"
+headers:
+  Content-Type: "application/json"
+  Authorization: "Bearer memcore-test-token-m1-m5"
 method: GET
 timeout_seconds: 10
 parameters:
