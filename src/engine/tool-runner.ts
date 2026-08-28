@@ -85,7 +85,17 @@ export async function executeToolCall(
 
     // Support GET method: append params as query string, no body
     const httpMethod = ((tool as any).method ?? 'POST').toUpperCase();
+    // 경로 파라미터 치환: endpoint의 {param} 플레이스홀더를 실제 값으로 교체
     let fetchUrl = tool.endpoint;
+    if ((tool as any).path_params && typeof fetchUrl === 'string') {
+      for (const [paramName] of Object.entries((tool as any).path_params as Record<string, unknown>)) {
+        const paramValue = parsedArgs[paramName];
+        if (paramValue !== undefined && paramValue !== null) {
+          fetchUrl = fetchUrl.replace(`{${paramName}}`, encodeURIComponent(String(paramValue)));
+          delete parsedArgs[paramName]; // 경로 파라미터는 body/query에서 제외
+        }
+      }
+    }
     let body: string | undefined;
 
     if (httpMethod === 'GET') {
