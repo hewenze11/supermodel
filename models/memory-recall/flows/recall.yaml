@@ -17,7 +17,5 @@ nodes:
       - search_by_topic
       - context_stage_create
     prompt: |
-      用户当前消息：
-      {{user_message}}
-
+      上面是用户当前发送的消息。
       请严格按角色说明中的三步流程执行记忆召回，输出完整的"记忆上下文"。

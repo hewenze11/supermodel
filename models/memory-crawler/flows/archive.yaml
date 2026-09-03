@@ -17,14 +17,6 @@ nodes:
       - update_doc
       - upsert_doc
     prompt: |
-      本轮对话内容如下，请执行归档：
-
-      用户消息：
-      {{user_message}}
-
-      算力模型回复：
-      {{assistant_message}}
-
-      session_id：{{session_id}}
-
-      请严格按角色说明中的五步流程执行，不可跳步，不可遗漏工具调用。
+      上面是本轮完整对话内容（包含用户消息和算力模型的回复）。
+      请严格按角色说明中的五步流程执行归档，不可跳步，不可遗漏工具调用。
+      session_id 请从对话内容中识别，若未提及则使用 "default-session"。
