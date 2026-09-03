@@ -89,10 +89,14 @@ export async function executeToolCall(
     let fetchUrl = tool.endpoint;
     if ((tool as any).path_params && typeof fetchUrl === 'string') {
       for (const [paramName] of Object.entries((tool as any).path_params as Record<string, unknown>)) {
-        const paramValue = parsedArgs[paramName];
+        // LLM 可能将路径参数混入 body 参数，兜底：从 parameters 和 path_params 同时查找
+        const paramValue = parsedArgs[paramName] ?? (typeof parsedArgs.parameters === 'object' && parsedArgs.parameters !== null ? (parsedArgs.parameters as Record<string, unknown>)[paramName] : undefined);
         if (paramValue !== undefined && paramValue !== null) {
           fetchUrl = fetchUrl.replace(`{${paramName}}`, encodeURIComponent(String(paramValue)));
-          delete parsedArgs[paramName]; // 경로 파라미터는 body/query에서 제외
+          delete parsedArgs[paramName];
+          if (typeof parsedArgs.parameters === 'object' && parsedArgs.parameters !== null) {
+            delete (parsedArgs.parameters as Record<string, unknown>)[paramName];
+          }
         }
       }
     }
