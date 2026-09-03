@@ -10,26 +10,21 @@ nodes:
     role_id: crawler
     timeout_seconds: 120
     tools:
-      - list_topics
       - ingest_message
+      - list_topics
       - archive_summary
       - list_docs
-      - upsert_doc
       - update_doc
+      - upsert_doc
     prompt: |
-      请归档上面的对话内容（user 消息和 assistant 消息均在输入中）。
-      请严格按以下步骤执行（每步都必须实际调用工具，不可只描述）：
+      本轮对话内容如下，请执行归档：
 
-      1. 调用 list_topics 查看已有话题（用于步骤5决策）
-      2. 从对话中提取 user 消息，调用 ingest_message 写入（role=user）
-      3. 从对话中提取 assistant 消息，调用 ingest_message 写入（role=assistant）
-      4. 生成本轮对话摘要（100-500字，含：核心内容 + 结论/决策 + 重要实体 + 待办，纯文本不用Markdown）
-      5. 决定话题标签（1-3个，参考已有话题优先复用，连续对话共用话题）
-      6. 调用 archive_summary（传入 session_id、步骤4摘要、步骤5话题数组）
-      7. 调用 list_docs 查看当前核心文档
-      8. 判断本轮对话是否有需要长期记忆的事实（职业/偏好/重要决定/项目信息等）：
-         - 有且已有对应文档 → 调用 update_doc 更新
-         - 有且是全新类别 → 调用 upsert_doc 新建（总数不超过20个，慎用）
-         - 无重要长期信息 → 跳过
+      用户消息：
+      {{user_message}}
 
-      完成后输出一行总结："归档完成：摘要XX字，话题[xxx]，L4文档[更新/新建/无变更]"
+      算力模型回复：
+      {{assistant_message}}
+
+      session_id：{{session_id}}
+
+      请严格按角色说明中的五步流程执行，不可跳步，不可遗漏工具调用。
