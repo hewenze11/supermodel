@@ -3,7 +3,12 @@ primary: true
 provider_type: openai
 base_url: "https://openrouter.ai/api/v1"
 api_key: "${OPENROUTER_API_KEY}"
-provider_model: "deepseek/deepseek-chat"
+provider_model: "deepseek/deepseek-v3.2"
+# OpenRouter 路由偏好：DeepInfra 节点对 tool-call 会返回空内容+零工具调用且照常计费（2026-09-06 实测），屏蔽之；
+# require_parameters 确保只路由到支持 tools 的节点。
+provider_options:
+  ignore: ["DeepInfra"]
+  require_parameters: true
 temperature: 0.3
 max_tokens: 4096
 system_prompt_extra: |

@@ -166,7 +166,9 @@ export async function executeToolCall(
         resultContent = JSON.stringify(data).slice(0, 2000);
       }
     }
-    const isError = data.status === 'error';
+    // Business-level failure: internal protocol status==='error', or common `ok:false` / `success:false` envelopes.
+    // Required for required_tools enforcement — a 200 with a failed body must not count as a successful call.
+    const isError = data.status === 'error' || data.ok === false || data.success === false;
     return {
       tool_call_id: toolCall.id,
       content: resultContent,

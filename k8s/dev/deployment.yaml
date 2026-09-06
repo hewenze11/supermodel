@@ -33,6 +33,8 @@ spec:
           value: "http://memory-spider-api.dev-memory-spider.svc.cluster.local:3001"
         - name: MEMCORE_BASE_URL
           value: "http://memcore-api.dev-memcore.svc.cluster.local:3000"
+        - name: ALERT_WEBHOOK_URL
+          value: "https://open.feishu.cn/open-apis/bot/v2/hook/f5863f4d-4f8f-41e6-8361-ee3a16672099"
         - name: APIMART_API_KEY
           valueFrom:
             secretKeyRef:

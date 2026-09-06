@@ -5,6 +5,7 @@ import { LLMClient, ChatCompletionRequest, StreamChunk } from '../llm/client';
 import { buildOpenAITools, executeToolCall, ToolCall } from './tool-runner';
 import { publishCancel, subscribeCancel } from '../redis';
 import { db } from '../db';
+import { sendAlert } from '../alert';
 import { RoleConfig, FlowConfig, NodeConfig, SerialNodeConfig, ParallelNodeConfig, ToolNodeConfig, ToolConfig } from '../config/types';
 
 // ============================================================
@@ -292,12 +293,21 @@ export class FlowEngine {
             model: role.provider_model,
             api_key: role.api_key,
             base_url: role.base_url,
-            max_tokens: role.max_tokens
+            max_tokens: role.max_tokens,
+            provider_options: role.provider_options
           });
 
           let nodeOutput = '';
           let nodePrompt = 0;
           let nodeCompletion = 0;
+          // Tools successfully executed in this node (for required_tools enforcement)
+          const calledTools = new Set<string>();
+          // Throws if any tool in sNode.required_tools was never successfully called.
+          const enforceRequiredTools = () => {
+            if (!sNode.required_tools || sNode.required_tools.length === 0) return;
+            const missing = sNode.required_tools.filter(t => !calledTools.has(t));
+            if (missing.length > 0) throw new Error(`required_tool_not_called: ${missing.join(',')}`);
+          };
 
           // NODE_TIMEOUT_MS: per-node LLM call timeout (default 60s, max 600s)
           const nodeTimeoutMs = Math.min(
@@ -329,6 +339,7 @@ export class FlowEngine {
             let toolCallMsgs = [...msgs];
             if (openAITools && openAITools.length > 0) {
               const MAX_TOOL_ROUNDS = 10;
+              let toolRoundsExhausted = true;
               for (let tr = 0; tr < MAX_TOOL_ROUNDS; tr++) {
                 const tcResp = await client.chatCompletion({
                   messages: toolCallMsgs,
@@ -347,24 +358,28 @@ export class FlowEngine {
                   nodeCompletion += tcResp.usage.completion_tokens;
                 }
 
-                if (finReason === 'tool_calls' && assistantMsg?.tool_calls) {
+                // Some providers return finish_reason='stop' while still carrying tool_calls — honour the payload, not the reason
+                if (assistantMsg?.tool_calls && (assistantMsg.tool_calls as any[]).length > 0) {
                   // Append assistant message with tool_calls
                   toolCallMsgs.push(assistantMsg as any);
                   // Execute each tool call
+                  const tcList = assistantMsg.tool_calls as unknown as ToolCall[];
                   const toolResults = await Promise.all(
-                    (assistantMsg.tool_calls as unknown as ToolCall[]).map(tc =>
+                    tcList.map(tc =>
                       executeToolCall(tc, tools, combinedSignal, extraHeaders)
                     )
                   );
                   // Append tool results as tool messages
-                  for (const tr2 of toolResults) {
+                  for (let i = 0; i < toolResults.length; i++) {
+                    const tr2 = toolResults[i];
+                    if (!tr2.isError) calledTools.add(tcList[i].function.name);
                     toolCallMsgs.push({
                       role: 'tool' as any,
                       tool_call_id: tr2.tool_call_id,
                       content: tr2.content
                     } as any);
                   }
-                  console.log(`[tool-call] node=${sNode.id} round=${tr + 1} tools=${assistantMsg.tool_calls.length}`);
+                  console.log(`[tool-call] node=${sNode.id} round=${tr + 1} tools=${tcList.length} finish_reason=${finReason}`);
                   continue; // loop
                 }
 
@@ -372,10 +387,24 @@ export class FlowEngine {
                 if (assistantMsg?.content) {
                   nodeOutput = assistantMsg.content as string;
                 }
+                toolRoundsExhausted = false;
                 break;
               }
 
+              // Model never stopped calling tools within MAX_TOOL_ROUNDS — nodeOutput is empty. Not fatal by itself
+              // (required_tools below decides), but it must be visible rather than silently recorded as success.
+              if (toolRoundsExhausted) {
+                console.warn(`[tool-call] node=${sNode.id} MAX_TOOL_ROUNDS=${MAX_TOOL_ROUNDS} exhausted, output empty, tools_called=[${Array.from(calledTools).join(',')}]`);
+                sendAlert(`tool_rounds_exhausted:${instanceName}/${flowConfig.id}`, `工具调用轮次耗尽 ${instanceName}/${flowConfig.id}`, [
+                  `node=${sNode.id} role=${sNode.role_id} model=${role.provider_model}`,
+                  `tools_called=[${Array.from(calledTools).join(',')}]`,
+                  `execution_id=${executionId}`
+                ]).catch(() => {});
+              }
+
               // If output node: re-run streaming with updated context (no tools this time) for SSE delivery
+              // (required_tools is enforced before the yield so nothing is streamed to the client for a run that will fail)
+              enforceRequiredTools();
               if (isOutputNode && nodeOutput) {
                 // We already have the output from tool-call loop, re-stream it as chunks
                 // by yielding a single synthetic chunk
@@ -391,6 +420,9 @@ export class FlowEngine {
               }
             } else {
               // ── Normal streaming path (no tools) ──────────────────────────
+              // Pre-check BEFORE streaming: no tools are wired on this path, so a node that declares
+              // required_tools can never satisfy them - fail here rather than after content has been yielded.
+              enforceRequiredTools();
               for await (const chunk of client.streamChatCompletion({
                 messages: msgs,
                 model: role.provider_model,
@@ -428,13 +460,23 @@ export class FlowEngine {
                 await client.query(SQL_UPDATE_FLOW_FAILED, ['node_timeout', Date.now(), round, executionId]);
               });
               executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'timeout', durationMs: Date.now() - nodeStartMs, note: 'Node execution timed out' });
+              sendAlert(`node_timeout:${instanceName}/${flowConfig.id}`, `节点超时 ${instanceName}/${flowConfig.id}`, [`node=${sNode.id} role=${sNode.role_id} model=${role.provider_model}`, `execution_id=${executionId}`]).catch(() => {});
               return { id: executionId, status: 'timeout', output: outputText, rounds: round, finishReason: 'node_timeout', totalUsage: { prompt_tokens: totalPrompt, completion_tokens: totalCompletion }, byRoleUsage };
             }
+            const isRequiredToolMiss = typeof err.message === 'string' && err.message.startsWith('required_tool_not_called');
+            const flowReason = isRequiredToolMiss ? 'required_tool_not_called' : 'node_error';
             await db.transaction(async (client) => {
               await client.query(SQL_UPDATE_NODE_FAILED, ['failed', Date.now(), err.message ?? 'Unknown error', nodeExecId]);
-              await client.query(SQL_UPDATE_FLOW_FAILED, ['node_error', Date.now(), round, executionId]);
+              await client.query(SQL_UPDATE_FLOW_FAILED, [flowReason, Date.now(), round, executionId]);
             });
             executionLog.push({ nodeId: sNode.id, roleId: sNode.role_id, status: 'failed', durationMs: Date.now() - nodeStartMs, note: err.message ?? 'Unknown error' });
+            sendAlert(`${flowReason}:${instanceName}/${flowConfig.id}`, `节点失败 ${instanceName}/${flowConfig.id}`, [
+              `node=${sNode.id} role=${sNode.role_id} model=${role.provider_model}`,
+              `reason=${flowReason}`,
+              `error=${String(err.message ?? 'Unknown error').slice(0, 300)}`,
+              `tools_called=[${Array.from(calledTools).join(',')}]`,
+              `execution_id=${executionId}`
+            ]).catch(() => {});
             throw err;
           }
 
@@ -509,7 +551,7 @@ export class FlowEngine {
             const msgs = messageList.buildMessages(systemPrompt, { context_window: contextWindow, system_token_budget: systemBudget });
             const snapshot = messageList.getInputMessagesSnapshot();
 
-            const client = new LLMClient({ provider_type: role.provider_type ?? 'openai', model: role.provider_model, api_key: role.api_key, base_url: role.base_url, max_tokens: role.max_tokens });
+            const client = new LLMClient({ provider_type: role.provider_type ?? 'openai', model: role.provider_model, api_key: role.api_key, base_url: role.base_url, max_tokens: role.max_tokens, provider_options: role.provider_options });
 
             return new Promise<{ roleId: string; nodeExecId: string; output: string | null; error: string | null; prompt: number; completion: number }>(async (resolve) => {
               // Insert node execution record (inside async Promise to use await)

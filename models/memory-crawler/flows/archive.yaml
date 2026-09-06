@@ -16,6 +16,9 @@ nodes:
       - list_docs
       - update_doc
       - upsert_doc
+    # 归档至少必须写入 L1；若模型一次都没调 ingest_message，节点判失败并告警，不再静默记 success
+    required_tools:
+      - ingest_message
     prompt: |
       上面是本轮完整对话内容（包含用户消息和算力模型的回复）。
       请严格按角色说明中的五步流程执行归档，不可跳步，不可遗漏工具调用。

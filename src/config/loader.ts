@@ -336,6 +336,17 @@ export class ConfigLoader {
             errors.push(`V-T1: Flow ${flowId} tool node ${node.id} references non-existent tool ${(node as ToolNodeConfig).tool_ref}`);
           }
         }
+        // V-T3: required_tools must be a subset of the node's tools whitelist
+        if (node.type === 'serial') {
+          const sn = node as SerialNodeConfig;
+          if (sn.required_tools && sn.required_tools.length > 0) {
+            const allowed = new Set(sn.tools ?? []);
+            for (const rt of sn.required_tools) {
+              if (!allowed.has(rt)) errors.push(`V-T3: Flow ${flowId} node ${node.id} required_tools '${rt}' is not in node.tools`);
+              if (!instance.tools.has(rt)) errors.push(`V-T3: Flow ${flowId} node ${node.id} required_tools '${rt}' does not exist in tools/`);
+            }
+          }
+        }
       }
     }
     

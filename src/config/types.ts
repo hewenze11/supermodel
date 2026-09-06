@@ -17,6 +17,11 @@ export interface RoleConfig {
   system_token_budget?: number;
   provider_type?: 'openai' | 'anthropic';
   max_tokens?: number;
+  /**
+   * 透传给上游的 provider 路由偏好（仅 OpenAI 兼容协议，如 OpenRouter 的 `provider` 字段）。
+   * 例：{ ignore: ["DeepInfra"], require_parameters: true }
+   */
+  provider_options?: Record<string, any>;
 }
 
 // 串行节点
@@ -28,6 +33,12 @@ export interface SerialNodeConfig {
   next?: string;           // 下一节点 id，不填则为输出节点
   tools?: string[];        // 工具白名单
   force_tool_support?: boolean;
+  /**
+   * 必须至少被调用一次的工具 id 列表。节点结束时若有工具未被调用，
+   * 节点判定失败（finish_reason=required_tool_not_called），flow 标记 failed 并触发告警。
+   * 用于防止上游模型静默不调工具却被记成 success（如归档流程零写入）。
+   */
+  required_tools?: string[];
 }
 
 // 并行节点

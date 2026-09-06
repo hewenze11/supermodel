@@ -7,6 +7,8 @@ export interface LLMClientConfig {
   base_url?: string;
   temperature?: number;
   max_tokens?: number;
+  /** 上游路由偏好（如 OpenRouter `provider`），仅 openai 协议透传 */
+  provider_options?: Record<string, any>;
 }
 
 export interface ChatCompletionRequest {
@@ -124,7 +126,10 @@ export class LLMClient {
       
       // Build body - exclude non-serializable signal, explicitly set stream:false
       const { signal: _sig, stream_options: _so, ...serializableRequest } = request as any;
-      const bodyObj = { ...serializableRequest, stream: false };
+      const bodyObj: any = { ...serializableRequest, stream: false };
+      if (this.config.provider_options && Object.keys(this.config.provider_options).length > 0) {
+        bodyObj.provider = this.config.provider_options;
+      }
       console.log(`[TOOL-CALL-BODY] keys=${Object.keys(bodyObj).join(',')}, has_tools=${!!bodyObj.tools}, stream=${bodyObj.stream}`);
       
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -188,7 +193,10 @@ export class LLMClient {
           temperature: request.temperature,
           max_tokens: request.max_tokens,
           stream: true,
-          stream_options: { include_usage: true }
+          stream_options: { include_usage: true },
+          ...(this.config.provider_options && Object.keys(this.config.provider_options).length > 0
+            ? { provider: this.config.provider_options }
+            : {})
         }),
         signal: controller.signal
       });
