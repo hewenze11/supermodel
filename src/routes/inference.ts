@@ -145,6 +145,9 @@ async function getWorkspaceUserPrompt(memcoreToken: string, workspaceId?: string
 /** 从请求的 X-User-Token 解析用户 ID，生成 memcore-compatible JWT */
 function buildMemcoreToken(userToken: string | undefined): string | null {
   if (!userToken) return null;
+  // memcore 自己的不透明凭证（ms_ 账号级 / pk_、ws_ 空间级）：直接透传，由 memcore authResolution 鉴权。
+  // 网页聊天页用 ms_token 归档，否则工具调用会退回 yaml 里的测试 token，记忆全部写进测试用户的空间。
+  if (/^(ms|pk|ws)_[A-Za-z0-9_-]+$/.test(userToken)) return userToken;
   try {
     // 优先：X-User-Token 是 memory-spider-api 签的 JWT，payload.userId 是数字
     const msSecret = process.env.MS_JWT_SECRET || 'memory-spider-jwt-secret-2026-dev';
@@ -291,6 +294,12 @@ export async function inferenceRoutes(fastify: FastifyInstance, options: Inferen
     const extraHeaders: Record<string, string> = memcoreToken
       ? { 'Authorization': `Bearer ${memcoreToken}` }
       : {};
+    // 转发子空间选择给 memcore 工具调用（ingest/archive/recall 等），否则全部落到用户默认空间。
+    // 只在带用户凭证时转发：memcore 会校验该 workspace 属于当前用户，越权返回 403。
+    const fwdWorkspaceId = req.headers['x-workspace-id'];
+    if (memcoreToken && typeof fwdWorkspaceId === 'string' && /^[0-9a-fA-F-]{36}$/.test(fwdWorkspaceId)) {
+      extraHeaders['X-Workspace-ID'] = fwdWorkspaceId;
+    }
 
     // ── 爬虫调用频率限制（按账号套餐，3秒滑动窗口） ────────────────────────
     // 只对携带 X-User-Token 的请求限速（MemCore 用户）。
